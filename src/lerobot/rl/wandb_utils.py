@@ -187,6 +187,5 @@ class WandBLogger:
         if isinstance(video_path, str):
             video_path = [video_path]
 
-        for i, path in enumerate(video_path):
-            wandb_video = self._wandb.Video(path, fps=self.env_fps, format="mp4")
-            self._wandb.log({f"{mode}/video_{i}": wandb_video}, step=step)
+        videos = {f"{mode}/video_{i}": self._wandb.Video(path, fps=self.env_fps, format="mp4") for i, path in enumerate(video_path)}
+        self._wandb.log(videos, step=step)

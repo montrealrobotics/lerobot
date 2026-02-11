@@ -486,9 +486,9 @@ if __name__ == "__main__":
             push_to_hub=False,
         ),
         wandb=WandBConfig(enable=True, project="lerobot-robocasa"),
-        steps=3000,
-        eval_freq=750,
-        log_freq=200,
+        steps=2000,
+        eval_freq=500,
+        log_freq=25,
         eval=EvalConfig(n_episodes=10, batch_size=1),
         batch_size=256,
     )
