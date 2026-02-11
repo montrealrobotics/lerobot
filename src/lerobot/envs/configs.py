@@ -400,7 +400,7 @@ class RoboCasaEnvConfig(EnvConfig):
     observation_width: int = 256
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
         }
     )
     features_map: dict[str, str] = field(
@@ -429,7 +429,7 @@ class RoboCasaEnvConfig(EnvConfig):
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
         elif self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(8,))
             self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )

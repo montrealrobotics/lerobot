@@ -180,9 +180,13 @@ class WandBLogger:
 
             self._wandb.log(data={f"{mode}/{k}": v}, step=step)
 
-    def log_video(self, video_path: str, step: int, mode: str = "train"):
+    def log_video(self, video_path: str | list[str], step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
 
-        wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
-        self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+        if isinstance(video_path, str):
+            video_path = [video_path]
+
+        for i, path in enumerate(video_path):
+            wandb_video = self._wandb.Video(path, fps=self.env_fps, format="mp4")
+            self._wandb.log({f"{mode}/video_{i}": wandb_video}, step=step)

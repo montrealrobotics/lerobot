@@ -169,9 +169,9 @@ def discover_dataset_properties(hdf5_paths: list[str]) -> dict[str, Any]:
                         # Process observation group
                         obs_group = item
                         for obs_key in obs_group:
-                            if obs_key.endswith("_image"):
-                                # Remove "_image" suffix for the feature name
-                                image_name = obs_key[:-6]  # Remove "_image"
+                            if obs_key.endswith("_rgb"):
+                                # Remove "_rgb" suffix for the feature name
+                                image_name = obs_key[:-4]  # Remove "_rgb"
                                 image_names.add(image_name)
                                 if image_name not in image_shapes:
                                     image_shapes[image_name] = obs_group[obs_key].shape[
@@ -237,6 +237,14 @@ def discover_dataset_properties(hdf5_paths: list[str]) -> dict[str, Any]:
                     )
                 fps = env_args.get("control_freq", 20)  # default to 20 fps as in robosuite if not found
                 fps = int(fps)
+        else:
+            fps = 20
+            print(
+                colored(
+                    f"Warning: fps not found in env_args for {hdf5_path}. Defaulting to 20 fps.",
+                    "red",
+                )
+            )
 
         return {
             "image_names": sorted(image_names),
@@ -292,22 +300,44 @@ def create_lerobot_features(properties: dict[str, Any]) -> dict[str, Any]:
             "names": [state_key],
         }
 
-    # Combine robot0_joint_pos_cos, robot0_joint_pos_sin and robot0_gripper_qpos into a single state feature
+    # Combine joint_states, gripper_states and ee_states into a single state feature
     # Only do this if all required keys exist
     features[OBS_STATE] = {
-        "dtype": str(state_dtypes["robot0_joint_pos_cos"]),
+        "dtype": str(state_dtypes["joint_states"]),
         "shape": (
-            state_shapes["robot0_joint_pos_cos"][0]
-            + state_shapes["robot0_joint_pos_sin"][0]
-            + state_shapes["robot0_gripper_qpos"][0],
+            state_shapes["joint_states"][0]
+            + 1,
         ),
-        "names": ["robot0_joint_pos_cos_7d", "robot0_joint_pos_sin_7d", "robot0_gripper_qpos_2d"],
+        "names": {
+            "axes": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "gripper"],
+        },
+    }
+    features[OBS_STATE + ".joint_states"] = {
+        "dtype": str(state_dtypes["joint_states"]),
+        "shape": (7,),
+        "names": {
+            "axes": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
+        },
+    }
+    features[OBS_STATE + ".gripper_states"] = {
+        "dtype": str(state_dtypes["gripper_states"]),
+        "shape": (2,),
+        "names": {
+            "axes": ["gripper_0", "gripper_1"],
+        },
+    }
+    features[OBS_STATE + ".ee_states"] = {
+        "dtype": str(state_dtypes["ee_states"]),
+        "shape": (6,),
+        "names": {
+            "axes": ["x", "y", "z", "roll", "pitch", "yaw"],
+        },
     }
 
     # Add actions
     features[ACTION] = {
         "dtype": str(properties["action_dtype"]),
-        "shape": properties["action_shape"],
+        "shape": (7,),
         "names": [ACTION],
     }
 
@@ -369,7 +399,7 @@ def load_robocasa_episode(f: h5py.File, ep_name: str, other_keys: dict[str, tupl
         if isinstance(ep_meta_str, str):
             ep_meta = json.loads(ep_meta_str)
 
-    lang = ep_meta.get("lang", "") if ep_meta else ""
+    lang = ep_attrs["task_description"]
 
     return {
         "obs": obs,
@@ -427,7 +457,7 @@ def convert_robocasa_to_lerobot(
     # We extract DATASET_NAME which is the third-to-last path component
     dataset_groups = defaultdict(list)
     for dataset_path in dataset_paths:
-        dataset_name = dataset_path.split("/")[-3]
+        dataset_name = dataset_path.split("/")[-4]
         dataset_groups[dataset_name].append(dataset_path)
 
     print(f"\nGrouped {len(dataset_paths)} paths into {len(dataset_groups)} dataset(s):")
@@ -497,8 +527,7 @@ def convert_robocasa_to_lerobot(
                         ep_name,
                         other_keys=properties.get("other_keys"),
                     )
-                    ep_meta = ep_data["ep_meta"]
-                    lang = ep_meta.get("lang")
+                    lang = ep_data.get("lang")
                     ep_meta_list.append(ep_data["ep_meta"])
                     task_clip_embedding = get_clip_embedding(lang, tokenizer, model, device)
 
@@ -511,7 +540,7 @@ def convert_robocasa_to_lerobot(
 
                         # Add images using their original names
                         for img_name in properties["image_names"]:
-                            frame_data[OBS_IMAGES + "." + img_name] = ep_data["obs"][img_name + "_image"][t]
+                            frame_data[OBS_IMAGES + "." + img_name] = ep_data["obs"][img_name + "_rgb"][t]
 
                         # Add each state key as a separate feature (use ALL keys found in episode)
                         for state_key in properties["state_keys"]:
@@ -536,18 +565,16 @@ def convert_robocasa_to_lerobot(
                                 frame_data[key] = data
 
                         # Combine robot state keys into OBS_STATE
-                        arm_state = np.concatenate(
-                            [
-                                ep_data["obs"]["robot0_joint_pos_cos"][t],
-                                ep_data["obs"]["robot0_joint_pos_sin"][t],
-                            ],
-                            axis=0,
-                        )
-                        gripper_state = ep_data["obs"]["robot0_gripper_qpos"][t]
-                        frame_data[OBS_STATE] = np.concatenate([arm_state, gripper_state], axis=0)
+                        arm_state = ep_data["obs"]["joint_states"][t]
+                        gripper_state = ep_data["obs"]["gripper_states"][t]
+                        ee_state = ep_data["obs"]["ee_states"][t]
+                        frame_data[OBS_STATE + ".joint_states"] = arm_state
+                        frame_data[OBS_STATE + ".gripper_states"] = gripper_state
+                        frame_data[OBS_STATE + ".ee_states"] = ee_state
+                        frame_data[OBS_STATE] = np.concatenate([arm_state, gripper_state[:1]], axis=0)
 
                         # Add actions
-                        frame_data[ACTION] = ep_data["actions"][t]
+                        frame_data[ACTION] = ep_data["actions"][t][:7]
 
                         # Add language instruction
                         lang = ep_data["lang"]  # only language instruction is available in general

@@ -146,7 +146,7 @@ def get_robocasa_zero_action(env):
 
 
 # Default constants
-OBS_STATE_DIM = 16
+OBS_STATE_DIM = 8#16
 ACTION_DIM = 12
 AGENT_POS_LOW = -1000.0
 AGENT_POS_HIGH = 1000.0
@@ -319,9 +319,9 @@ class RoboCasaEnv(gym.Env):
             raise ValueError(f"Unknown obs_type: {self.obs_type}")
 
         # Set up action space
-        action_dim = self._env.action_dim
+        self.action_dim = self._env.action_dim
         self.action_space = spaces.Box(
-            low=ACTION_LOW, high=ACTION_HIGH, shape=(action_dim,), dtype=np.float32
+            low=ACTION_LOW, high=ACTION_HIGH, shape=(self.action_dim,), dtype=np.float32
         )
 
         # Store task info
@@ -356,9 +356,10 @@ class RoboCasaEnv(gym.Env):
         if "robot0_eef_pos" in raw_obs and "robot0_eef_quat" in raw_obs:
             state = np.concatenate(
                 (
-                    raw_obs["robot0_joint_pos_cos"],
-                    raw_obs["robot0_joint_pos_sin"],
-                    raw_obs["robot0_gripper_qpos"],
+                    # raw_obs["robot0_joint_pos_cos"],
+                    # raw_obs["robot0_joint_pos_sin"],
+                    raw_obs["robot0_joint_pos"],
+                    raw_obs["robot0_gripper_qpos"][:1],
                 )
             )
             agent_pos = state
@@ -407,6 +408,11 @@ class RoboCasaEnv(gym.Env):
                 f"Expected action to be 1-D (shape (action_dim,)), "
                 f"but got shape {action.shape} with ndim={action.ndim}"
             )
+
+        if action.shape[0] < self.action_dim:
+            padded_action = np.zeros(self.action_dim, dtype=action.dtype)
+            padded_action[: action.shape[0]] = action
+            action = padded_action
 
         self._step_count += 1
         raw_obs, reward, done, info = self._env.step(action)
