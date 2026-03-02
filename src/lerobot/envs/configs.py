@@ -400,7 +400,7 @@ class RoboCasaEnvConfig(EnvConfig):
     observation_width: int = 256
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
-            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(7,)),
+            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(22,)),
         }
     )
     features_map: dict[str, str] = field(
@@ -429,7 +429,7 @@ class RoboCasaEnvConfig(EnvConfig):
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
         elif self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(8,))
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(23,))
             self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
@@ -456,6 +456,8 @@ class RoboCasaEnvConfig(EnvConfig):
             "camera_name_mapping": self.camera_name_mapping,
             "max_episode_steps": self.episode_length,
         }
+
+        
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):

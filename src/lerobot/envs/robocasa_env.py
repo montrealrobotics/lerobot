@@ -124,9 +124,9 @@ def _parse_env_meta_from_repo_id(repo_id: str, episode_index: int = 0) -> dict[s
 def get_robocasa_zero_action(env):
     """Get zero/no-op action, used to roll out the simulation while the robot does nothing."""
     active_robot = env.robots[0]
-    if env.action_dim == 12:
+    robot_name = active_robot.name
+    if robot_name == "PandaOmron" or env.action_dim == 12:
         assert len(env.robots) == 1, "Only one robot is supported in this function"
-        assert env.robots[0].name == "PandaOmron", "Only PandaOmron is supported in this function"
         arms = ["right"]
         zero_action_dict = {}
         for arm in arms:
@@ -139,15 +139,29 @@ def get_robocasa_zero_action(env):
         zero_action_dict["base_mode"] = -1
         zero_action_dict["base"] = np.zeros(3)
         zero_action = active_robot.create_action_vector(zero_action_dict)
+    elif robot_name == "PandaDexLeapRHOmron" or env.action_dim == 27:
+        # PandaDexLeapRHOmron action layout:
+        # [right(6), right_gripper(16), base(3), torso(1), base_mode(1)] = 27
+        assert len(env.robots) == 1, "Only one robot is supported in this function"
+        zero_action_dict = {
+            "right": np.zeros(6),
+            "right_gripper": np.zeros(16),
+            "base": np.zeros(3),
+            "torso": np.zeros(1),
+            "base_mode": -1,
+        }
+        zero_action = active_robot.create_action_vector(zero_action_dict)
     else:
-        # For single-arm robots, try to get the arm name
-        raise NotImplementedError("If you're using another robot, need to update this function")
+        raise NotImplementedError(
+            f"get_robocasa_zero_action: unsupported robot '{robot_name}' with action_dim={env.action_dim}. "
+            "Please add a branch for this robot."
+        )
     return zero_action
 
 
 # Default constants
-OBS_STATE_DIM = 8#16
-ACTION_DIM = 12
+OBS_STATE_DIM = 23 #8
+ACTION_DIM = 22 # 12
 AGENT_POS_LOW = -1000.0
 AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
@@ -261,7 +275,7 @@ class RoboCasaEnv(gym.Env):
         # Load environment arguments from dataset
         env_args = EnvArgs(
             env_name=task_name,
-            robots="PandaOmron",
+            robots="PandaDexLeapRHOmron",
             controller="OSC_POSE",
             has_renderer=(render_mode == "human"),
             has_offscreen_renderer=(render_mode == "rgb_array"),
@@ -359,8 +373,10 @@ class RoboCasaEnv(gym.Env):
                     # raw_obs["robot0_joint_pos_cos"],
                     # raw_obs["robot0_joint_pos_sin"],
                     raw_obs["robot0_joint_pos"],
-                    raw_obs["robot0_gripper_qpos"][:1],
-                )
+                    # raw_obs["robot0_gripper_qpos"][:1],
+                    raw_obs["robot0_gripper_qpos"],
+                ),
+                axis=0
             )
             agent_pos = state
         else:
