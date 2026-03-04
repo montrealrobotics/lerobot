@@ -272,11 +272,18 @@ class RoboCasaEnv(gym.Env):
             }
         self.camera_name_mapping = camera_name_mapping
 
-        # Load environment arguments from dataset
+        # Load the robot's composite controller config directly (matching collect_demos.py).
+        # Using EnvArgs(controller="OSC_POSE") would go through refactor_composite_controller_config
+        # which strips `use_action_scaling: false` from the gripper config, causing a mismatch
+        # between data collection and evaluation.
+        from robosuite.controllers.composite.composite_controller_factory import load_composite_controller_config
+        controller_configs = load_composite_controller_config(robot="PandaDexLeapRHOmron")
+
         env_args = EnvArgs(
             env_name=task_name,
             robots="PandaDexLeapRHOmron",
-            controller="OSC_POSE",
+            controller=None,  # not used when controller_configs is provided
+            controller_configs=controller_configs,
             has_renderer=(render_mode == "human"),
             has_offscreen_renderer=(render_mode == "rgb_array"),
             use_camera_obs=(render_mode == "rgb_array"),
