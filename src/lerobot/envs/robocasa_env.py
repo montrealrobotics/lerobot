@@ -256,6 +256,7 @@ class RoboCasaEnv(gym.Env):
         )  # Required by gymnasium for env.call("_max_episode_steps")
         self.return_raw_obs = return_raw_obs
         self._step_count = 0
+        self._last_rendered_images: dict[str, np.ndarray] | None = None
 
         # Parse camera names
         self.camera_name = _parse_camera_names(camera_name)
@@ -350,10 +351,12 @@ class RoboCasaEnv(gym.Env):
         self.task_description = None
 
     def render(self):
-        """Render the environment."""
-        raw_obs = self._env._get_observations()
-        image = self._format_raw_obs(raw_obs)["pixels"]["robot0_agentview_center"]
-        return image
+        """Render the environment using cached images from the last step/reset."""
+        if self._last_rendered_images is None:
+            raise RuntimeError(
+                "render() called before reset(). Call reset() first."
+            )
+        return self._last_rendered_images["robot0_agentview_center"]
 
     def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
         """Format raw observations from RoboCasa into the expected format."""
@@ -414,6 +417,15 @@ class RoboCasaEnv(gym.Env):
         raw_obs = self._env.reset()
         self.task_description = self._env.get_ep_meta().get("lang", None)
 
+        # Robocasa fixture state (e.g. CoffeeMachine._turned_on, Microwave._turned_on)
+        # is a Python-level latch that is NOT cleared by env.reset(). If any previous
+        # episode triggered it, all subsequent episodes will see _check_success()=True
+        # immediately, causing 1-step termination and 0-second eval videos.
+        if hasattr(self._env, "fixtures"):
+            for fixture in self._env.fixtures.values():
+                if hasattr(fixture, "_turned_on"):
+                    fixture._turned_on = False
+
         # After reset, objects may be unstable. Step the simulator with a no-op action
         # for a few frames so everything settles.
         zero_action = get_robocasa_zero_action(self._env)
@@ -421,6 +433,8 @@ class RoboCasaEnv(gym.Env):
             raw_obs, _, _, _ = self._env.step(zero_action)
 
         observation = self._format_raw_obs(raw_obs)
+        if "pixels" in observation:
+            self._last_rendered_images = observation["pixels"]
         info = {"is_success": False}
         return observation, info
 
@@ -455,6 +469,8 @@ class RoboCasaEnv(gym.Env):
         )
 
         observation = self._format_raw_obs(raw_obs)
+        if "pixels" in observation:
+            self._last_rendered_images = observation["pixels"]
 
         if terminated or truncated:
             info["final_info"] = {

@@ -399,11 +399,16 @@ def eval_policy(
                 videos_dir.mkdir(parents=True, exist_ok=True)
                 video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
+                n_video_frames = min(done_index + 2, stacked_frames.shape[0])
+                logging.info(
+                    f"Saving eval video {n_episodes_rendered}: {video_path} "
+                    f"({n_video_frames} frames, done_index={done_index})"
+                )
                 thread = threading.Thread(
                     target=write_video,
                     args=(
                         str(video_path),
-                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
+                        stacked_frames[: done_index + 2],  # + 2: reset frame + all steps through done
                         env.unwrapped.metadata["render_fps"],
                     ),
                 )
