@@ -306,10 +306,10 @@ def create_lerobot_features(properties: dict[str, Any]) -> dict[str, Any]:
         "dtype": str(state_dtypes["joint_states"]),
         "shape": (
             state_shapes["joint_states"][0]
-            + 1,
+            + 16,
         ),
         "names": {
-            "axes": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "gripper"],
+            "axes": ["joint_0", "joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6", "gripper_0", "gripper_1", "gripper_2", "gripper_3", "gripper_4", "gripper_5", "gripper_6", "gripper_7", "gripper_8", "gripper_9", "gripper_10", "gripper_11", "gripper_12", "gripper_13", "gripper_14", "gripper_15"],
         },
     }
     features[OBS_STATE + ".joint_states"] = {
@@ -321,9 +321,9 @@ def create_lerobot_features(properties: dict[str, Any]) -> dict[str, Any]:
     }
     features[OBS_STATE + ".gripper_states"] = {
         "dtype": str(state_dtypes["gripper_states"]),
-        "shape": (2,),
+        "shape": (16,),
         "names": {
-            "axes": ["gripper_0", "gripper_1"],
+            "axes": ["gripper_0", "gripper_1", "gripper_2", "gripper_3", "gripper_4", "gripper_5", "gripper_6", "gripper_7", "gripper_8", "gripper_9", "gripper_10", "gripper_11", "gripper_12", "gripper_13", "gripper_14", "gripper_15"],
         },
     }
     features[OBS_STATE + ".ee_states"] = {
@@ -337,7 +337,7 @@ def create_lerobot_features(properties: dict[str, Any]) -> dict[str, Any]:
     # Add actions
     features[ACTION] = {
         "dtype": str(properties["action_dtype"]),
-        "shape": (7,),
+        "shape": (22,), # eef + 16 gripper
         "names": [ACTION],
     }
 
@@ -571,10 +571,10 @@ def convert_robocasa_to_lerobot(
                         frame_data[OBS_STATE + ".joint_states"] = arm_state
                         frame_data[OBS_STATE + ".gripper_states"] = gripper_state
                         frame_data[OBS_STATE + ".ee_states"] = ee_state
-                        frame_data[OBS_STATE] = np.concatenate([arm_state, gripper_state[:1]], axis=0)
+                        frame_data[OBS_STATE] = np.concatenate([arm_state, gripper_state], axis=0)
 
                         # Add actions
-                        frame_data[ACTION] = ep_data["actions"][t][:7]
+                        frame_data[ACTION] = ep_data["actions"][t][:22]
 
                         # Add language instruction
                         lang = ep_data["lang"]  # only language instruction is available in general
