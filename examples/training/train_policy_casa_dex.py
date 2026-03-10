@@ -465,14 +465,18 @@ if __name__ == "__main__":
     features = dataset_to_policy_features(dataset_metadata.features)
     input_images = ["observation.images.robot0_agentview_left", "observation.images.robot0_agentview_right", "observation.images.robot0_eye_in_hand"]
     input_state = ["observation.state"]
-    input_actions = ["action"]
-    input_features = {key: features[key] for key in input_images + input_state + input_actions}
-    output_features = {key: features[key] for key in input_actions}
+    output_actions = ["action"]
+    input_features = {key: features[key] for key in input_images + input_state}
+    output_features = {key: features[key] for key in output_actions}
 
     # Replace this with draccus parsing for the main function
     cfg = TrainPipelineConfig(
         dataset=DatasetConfig(repo_id=dataset_name, video_backend="pyav"),
-        env=RoboCasaEnvConfig(task="CoffeePressButton", camera_name="robot0_agentview_left,robot0_agentview_right,robot0_eye_in_hand,robot0_agentview_center"),
+        env=RoboCasaEnvConfig(
+            task="CoffeePressButton",
+            robot="PandaDexLeapRHOmron",
+            camera_name="robot0_agentview_left,robot0_agentview_right,robot0_eye_in_hand,robot0_agentview_center",
+        ),
         policy=ACTConfig(
             input_features=input_features,
             output_features=output_features,
@@ -485,11 +489,11 @@ if __name__ == "__main__":
             },
             push_to_hub=False,
         ),
-        wandb=WandBConfig(enable=False, project="lerobot-robocasa"),
-        steps=2000,
-        eval_freq=10,#500,
-        log_freq=25,
+        wandb=WandBConfig(enable=True, project="lerobot-robocasa"),
+        steps=5000,
+        eval_freq=1000,
+        log_freq=50,
         eval=EvalConfig(n_episodes=10, batch_size=1),
-        batch_size=32#256,
+        batch_size=256,
     )
     main(cfg=cfg)

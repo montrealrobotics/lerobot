@@ -390,6 +390,7 @@ class MetaworldEnv(EnvConfig):
 @dataclass
 class RoboCasaEnvConfig(EnvConfig):
     task: str | None = None  # Task name (required)
+    robot: str = "PandaDexLeapRHOmron"  # "PandaOmron" or "PandaDexLeapRHOmron"
     fps: int = 20
     episode_length: int | None = None  # set inside the env for each task
     obs_type: str = "pixels_agent_pos"
@@ -399,8 +400,16 @@ class RoboCasaEnvConfig(EnvConfig):
     observation_height: int = 256
     observation_width: int = 256
     features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {}
+    )
+    features_map: dict[str, str] = field(
         default_factory=lambda: {
-            ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(22,)),
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/robot0_agentview_center_image": "observation.images.robot0_agentview_center",
+            "pixels/robot0_agentview_left_image": "observation.images.robot0_agentview_left",
+            "pixels/robot0_agentview_right_image": "observation.images.robot0_agentview_right",
+            "pixels/robot0_eye_in_hand_image": "observation.images.robot0_eye_in_hand",
         }
     )
     features_map: dict[str, str] = field(
@@ -415,6 +424,20 @@ class RoboCasaEnvConfig(EnvConfig):
     )
 
     def __post_init__(self):
+        # Determine dims from robot type
+        _robot_dims = {
+            "PandaOmron": {"action": 7, "state": 8},
+            "PandaDexLeapRHOmron": {"action": 22, "state": 23},
+        }
+        dims = _robot_dims.get(self.robot)
+        if dims is None:
+            raise ValueError(f"Unsupported robot '{self.robot}'. Supported: {list(_robot_dims.keys())}")
+        action_dim = dims["action"]
+        state_dim = dims["state"]
+
+        # Set action feature
+        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))
+
         if self.obs_type == "pixels":
             self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
@@ -429,7 +452,7 @@ class RoboCasaEnvConfig(EnvConfig):
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
         elif self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(23,))
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))
             self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
                 type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
             )
@@ -448,6 +471,7 @@ class RoboCasaEnvConfig(EnvConfig):
     @property
     def gym_kwargs(self) -> dict:
         return {
+            "robot": self.robot,
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
             "observation_width": self.observation_width,

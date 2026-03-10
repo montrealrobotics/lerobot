@@ -159,9 +159,20 @@ def get_robocasa_zero_action(env):
     return zero_action
 
 
-# Default constants
-OBS_STATE_DIM = 23 #8
-ACTION_DIM = 22 # 12
+# Per-robot configuration: obs_state_dim, action_dim, gripper_qpos_slice
+# obs_state_dim = arm_joints + gripper/hand_joints
+# For PandaOmron: 7 arm + 1 gripper (take [:1] from 2-dim gripper_qpos) = 8
+# For PandaDexLeapRHOmron: 7 arm + 16 hand = 23
+ROBOT_CONFIGS = {
+    "PandaOmron": {
+        "obs_state_dim": 8,
+        "gripper_qpos_slice": slice(0, 1),  # take first of 2 gripper values
+    },
+    "PandaDexLeapRHOmron": {
+        "obs_state_dim": 23,
+        "gripper_qpos_slice": slice(None),  # take all 16 hand joints
+    },
+}
 AGENT_POS_LOW = -1000.0
 AGENT_POS_HIGH = 1000.0
 ACTION_LOW = -1.0
@@ -208,8 +219,8 @@ class RoboCasaEnv(gym.Env):
 
     def __init__(
         self,
-        # dataset_path: str,
         task_name: str,
+        robot: str = "PandaDexLeapRHOmron",
         camera_name: str | Sequence[str] = "robot0_agentview_center,robot0_eye_in_hand",
         obs_type: str = "pixels",
         render_mode: str = "rgb_array",
@@ -242,6 +253,12 @@ class RoboCasaEnv(gym.Env):
             **env_kwargs: Additional arguments to pass to environment creation
         """
         super().__init__()
+        if robot not in ROBOT_CONFIGS:
+            raise ValueError(
+                f"Unsupported robot '{robot}'. Supported: {list(ROBOT_CONFIGS.keys())}"
+            )
+        self.robot = robot
+        self._robot_cfg = ROBOT_CONFIGS[robot]
         self.task_name = task_name
         self.obs_type = obs_type
         self.render_mode = render_mode
@@ -278,11 +295,11 @@ class RoboCasaEnv(gym.Env):
         # which strips `use_action_scaling: false` from the gripper config, causing a mismatch
         # between data collection and evaluation.
         from robosuite.controllers.composite.composite_controller_factory import load_composite_controller_config
-        controller_configs = load_composite_controller_config(robot="PandaDexLeapRHOmron")
+        controller_configs = load_composite_controller_config(robot=robot)
 
         env_args = EnvArgs(
             env_name=task_name,
-            robots="PandaDexLeapRHOmron",
+            robots=robot,
             controller=None,  # not used when controller_configs is provided
             controller_configs=controller_configs,
             has_renderer=(render_mode == "human"),
@@ -332,7 +349,7 @@ class RoboCasaEnv(gym.Env):
                     "agent_pos": spaces.Box(
                         low=AGENT_POS_LOW,
                         high=AGENT_POS_HIGH,
-                        shape=(OBS_STATE_DIM,),
+                        shape=(self._robot_cfg["obs_state_dim"],),
                         dtype=np.float64,
                     ),
                 }
@@ -376,22 +393,20 @@ class RoboCasaEnv(gym.Env):
                     f"Camera name {camera_name} not found in raw observations:\n{raw_obs.keys()}"
                 )
 
-        # Extract agent position (end-effector pose + gripper)
+        # Extract agent position (joint_pos + gripper/hand joints)
         if "robot0_eef_pos" in raw_obs and "robot0_eef_quat" in raw_obs:
+            gripper_slice = self._robot_cfg["gripper_qpos_slice"]
             state = np.concatenate(
                 (
-                    # raw_obs["robot0_joint_pos_cos"],
-                    # raw_obs["robot0_joint_pos_sin"],
                     raw_obs["robot0_joint_pos"],
-                    # raw_obs["robot0_gripper_qpos"][:1],
-                    raw_obs["robot0_gripper_qpos"],
+                    raw_obs["robot0_gripper_qpos"][gripper_slice],
                 ),
                 axis=0
             )
             agent_pos = state
         else:
             # Fallback: use zeros if not available
-            agent_pos = np.zeros(OBS_STATE_DIM)
+            agent_pos = np.zeros(self._robot_cfg["obs_state_dim"])
 
         if self.obs_type == "pixels":
             return {"pixels": images.copy()}
@@ -417,10 +432,6 @@ class RoboCasaEnv(gym.Env):
         raw_obs = self._env.reset()
         self.task_description = self._env.get_ep_meta().get("lang", None)
 
-        # Robocasa fixture state (e.g. CoffeeMachine._turned_on, Microwave._turned_on)
-        # is a Python-level latch that is NOT cleared by env.reset(). If any previous
-        # episode triggered it, all subsequent episodes will see _check_success()=True
-        # immediately, causing 1-step termination and 0-second eval videos.
         if hasattr(self._env, "fixtures"):
             for fixture in self._env.fixtures.values():
                 if hasattr(fixture, "_turned_on"):
