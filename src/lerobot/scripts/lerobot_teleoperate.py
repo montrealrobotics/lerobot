@@ -223,7 +223,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
     teleop.connect()
     robot.connect()
-
+    print(cfg.teleop_time_s)
     try:
         teleop_loop(
             teleop=teleop,
