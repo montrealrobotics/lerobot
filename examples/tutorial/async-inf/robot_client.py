@@ -3,7 +3,7 @@ import threading
 from lerobot.async_inference.configs import RobotClientConfig
 from lerobot.async_inference.helpers import visualize_action_queue_size
 from lerobot.async_inference.robot_client import RobotClient
-from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+from lerobot.cameras.opencv import OpenCVCameraConfig
 from lerobot.robots.so_follower import SO100FollowerConfig
 
 
@@ -30,6 +30,7 @@ def main():
         robot=robot_cfg,
         server_address=server_address,
         policy_device="mps",
+        client_device="cpu",
         policy_type="act",
         pretrained_name_or_path="<user>/robot_learning_tutorial_act",
         chunk_size_threshold=0.5,  # g

@@ -26,12 +26,12 @@ from huggingface_hub import hf_hub_download
 from huggingface_hub.constants import CONFIG_NAME
 from huggingface_hub.errors import HfHubHTTPError
 
-from lerobot.configs.types import FeatureType, PolicyFeature
-from lerobot.optim.optimizers import OptimizerConfig
-from lerobot.optim.schedulers import LRSchedulerConfig
+from lerobot.optim import LRSchedulerConfig, OptimizerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
+from lerobot.utils.device_utils import auto_select_torch_device, is_amp_available, is_torch_device_available
 from lerobot.utils.hub import HubMixin
-from lerobot.utils.utils import auto_select_torch_device, is_amp_available, is_torch_device_available
+
+from .types import FeatureType, PolicyFeature
 
 T = TypeVar("T", bound="PreTrainedConfig")
 logger = getLogger(__name__)
@@ -45,12 +45,12 @@ class PreTrainedConfig(draccus.ChoiceRegistry, HubMixin, abc.ABC):  # type: igno
     Args:
         n_obs_steps: Number of environment steps worth of observations to pass to the policy (takes the
             current step and additional steps going back).
-        input_shapes: A dictionary defining the shapes of the input data for the policy.
-        output_shapes: A dictionary defining the shapes of the output data for the policy.
-        input_normalization_modes: A dictionary with key representing the modality and the value specifies the
-            normalization mode to apply.
-        output_normalization_modes: Similar dictionary as `input_normalization_modes`, but to unnormalize to
-            the original scale.
+        input_features: A dictionary defining the PolicyFeature of the input data for the policy. The key represents
+            the input data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        output_features: A dictionary defining the PolicyFeature of the output data for the policy. The key represents
+            the output data name, and the value is PolicyFeature, which consists of FeatureType and shape attributes.
+        normalization_mapping: A dictionary that maps from a str value of FeatureType (e.g., "STATE", "VISUAL") to
+            a corresponding NormalizationMode (e.g., NormalizationMode.MIN_MAX)
     """
 
     n_obs_steps: int = 1
