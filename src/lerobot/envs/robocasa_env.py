@@ -22,13 +22,14 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any
+
 import gymnasium as gym
 import h5py
 import numpy as np
+import robocasa  # load so that gymnasium can find the environment
 import robosuite
-import robocasa # load so that gymnasium can find the environment
 from gymnasium import spaces
-from robosuite.controllers import load_part_controller_config, load_composite_controller_config
+from robosuite.controllers import load_composite_controller_config, load_part_controller_config
 
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
@@ -254,9 +255,7 @@ class RoboCasaEnv(gym.Env):
         """
         super().__init__()
         if robot not in ROBOT_CONFIGS:
-            raise ValueError(
-                f"Unsupported robot '{robot}'. Supported: {list(ROBOT_CONFIGS.keys())}"
-            )
+            raise ValueError(f"Unsupported robot '{robot}'. Supported: {list(ROBOT_CONFIGS.keys())}")
         self.robot = robot
         self._robot_cfg = ROBOT_CONFIGS[robot]
         self.task_name = task_name
@@ -294,7 +293,10 @@ class RoboCasaEnv(gym.Env):
         # Using EnvArgs(controller="OSC_POSE") would go through refactor_composite_controller_config
         # which strips `use_action_scaling: false` from the gripper config, causing a mismatch
         # between data collection and evaluation.
-        from robosuite.controllers.composite.composite_controller_factory import load_composite_controller_config
+        from robosuite.controllers.composite.composite_controller_factory import (
+            load_composite_controller_config,
+        )
+
         controller_configs = load_composite_controller_config(robot=robot)
 
         env_args = EnvArgs(
@@ -370,9 +372,7 @@ class RoboCasaEnv(gym.Env):
     def render(self):
         """Render the environment using cached images from the last step/reset."""
         if self._last_rendered_images is None:
-            raise RuntimeError(
-                "render() called before reset(). Call reset() first."
-            )
+            raise RuntimeError("render() called before reset(). Call reset() first.")
         return self._last_rendered_images["robot0_agentview_center"]
 
     def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
@@ -401,7 +401,7 @@ class RoboCasaEnv(gym.Env):
                     raw_obs["robot0_joint_pos"],
                     raw_obs["robot0_gripper_qpos"][gripper_slice],
                 ),
-                axis=0
+                axis=0,
             )
             agent_pos = state
         else:
@@ -509,7 +509,7 @@ def _make_env_fns(
 
     def _make_env(episode_index: int, **kwargs) -> RoboCasaEnv:
         local_kwargs = dict(kwargs)
-        
+
         # Extract ep_meta for this worker from ep_metas list if provided
         if ep_metas is not None:
             if len(ep_metas) <= episode_index:
@@ -524,10 +524,10 @@ def _make_env_fns(
 
         # Extract seed from ep_meta if present, otherwise use episode_index as default
         seed = local_kwargs.pop("seed", episode_index)
-        
+
         # Remove ep_meta from local_kwargs if present (shouldn't be there, but just in case)
         local_kwargs.pop("ep_meta", None)
-        
+
         return RoboCasaEnv(
             task_name=task_name,
             camera_name=camera_names,
@@ -544,7 +544,7 @@ def _make_env_fns(
 
 # ---- Main API ----------------------------------------------------------------
 def create_robocasa_envs(
-    task_name: str,
+    task: str,
     n_envs: int,
     gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = "",
@@ -559,7 +559,7 @@ def create_robocasa_envs(
         - n_envs is the number of rollouts *per task* (episode_index = 0..n_envs-1).
         - For RoboCasa, we use a single suite_name "robocasa" and task_id 0.
     Args:
-        task_name: Name of the task
+        task: Name of the task
         n_envs: Number of environments to create
         gym_kwargs: Additional arguments to pass to RoboCasaEnv. Can include 'ep_metas' (list of dicts)
             to provide different ep_meta for each worker. Each ep_meta dict can include a 'seed' key
@@ -576,7 +576,7 @@ def create_robocasa_envs(
     gym_kwargs_camera_name = gym_kwargs.pop("camera_name", None)
     camera_name = camera_name if camera_name != "" else gym_kwargs_camera_name
     parsed_camera_names = _parse_camera_names(camera_name)
-    
+
     # Extract ep_metas from gym_kwargs (similar to how camera_name is handled)
     # This prevents it from being passed to the main env class
     ep_metas = gym_kwargs.pop("ep_metas", None)
@@ -590,13 +590,13 @@ def create_robocasa_envs(
 
     suite_name = "robocasa"
     task_id = 0
-    
-    print(f"Creating RoboCasa envs | task={task_name} | n_envs(per task)={n_envs}")
-    
+
+    print(f"Creating RoboCasa envs | task={task} | n_envs(per task)={n_envs}")
+
     out: dict[str, dict[int, Any]] = defaultdict(dict)
-    
+
     fns = _make_env_fns(
-        task_name=task_name,
+        task_name=task,
         n_envs=n_envs,
         camera_names=parsed_camera_names,
         gym_kwargs=gym_kwargs,

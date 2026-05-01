@@ -26,44 +26,40 @@ from contextlib import nullcontext
 from pprint import pformat
 from typing import Any
 
-import draccus
 import torch
 from accelerate import Accelerator
 from accelerate.utils import DistributedDataParallelKwargs
-
-from lerobot.configs.types import NormalizationMode
 from termcolor import colored
 from torch.optim import Optimizer
 
-from lerobot.configs import parser
-from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
-from lerobot.configs.policies import PreTrainedConfig
-from lerobot.configs.train import TrainPipelineConfig
-from lerobot.datasets.factory import make_dataset
-from lerobot.datasets.sampler import EpisodeAwareSampler
-from lerobot.datasets.utils import cycle
-from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.datasets.utils import dataset_to_policy_features
-from lerobot.envs.configs import RoboCasaEnvConfig
-from lerobot.envs.factory import make_env, make_env_pre_post_processors
-from lerobot.envs.utils import close_envs
-from lerobot.optim.factory import make_optimizer_and_scheduler
-from lerobot.policies.act.configuration_act import ACTConfig
-from lerobot.policies.act.modeling_act import ACTPolicy
-from lerobot.policies.factory import make_policy, make_pre_post_processors
-from lerobot.rl.wandb_utils import WandBLogger
-from lerobot.scripts.lerobot_eval import eval_policy_all
-from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
-from lerobot.utils.random_utils import set_seed
-from lerobot.utils.train_utils import (
+from lerobot.common.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.utils.utils import format_big_number, has_method, init_logging
+from lerobot.common.wandb_utils import WandBLogger
+from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
+from lerobot.configs.train import TrainPipelineConfig
+from lerobot.configs.types import NormalizationMode
+from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.datasets.sampler import EpisodeAwareSampler
+from lerobot.envs.configs import RoboCasaEnv
+from lerobot.envs.factory import make_env, make_env_pre_post_processors
+from lerobot.envs.utils import close_envs
+from lerobot.optim.factory import make_optimizer_and_scheduler
+from lerobot.policies.act.configuration_act import ACTConfig
+from lerobot.policies.act.modeling_act import ACTPolicy
+from lerobot.policies.factory import make_policy, make_pre_post_processors
+from lerobot.scripts.lerobot_eval import eval_policy_all
+from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
+from lerobot.utils.random_utils import set_seed
+from lerobot.utils.sample_weighting import make_sample_weighter
+from lerobot.utils.utils import cycle, format_big_number, has_method, init_logging
 
 logger = logging.getLogger(__name__)
 
@@ -77,25 +73,23 @@ def update_policy(
     accelerator: Accelerator,
     lr_scheduler=None,
     lock=None,
-    rabc_weights_provider=None,
+    sample_weighter=None,
 ) -> tuple[MetricsTracker, dict]:
     start_time = time.perf_counter()
     policy.train()
 
-    rabc_batch_weights = None
-    rabc_batch_stats = None
-    if rabc_weights_provider is not None:
-        rabc_batch_weights, rabc_batch_stats = rabc_weights_provider.compute_batch_weights(batch)
+    sample_weights = None
+    weight_stats = None
+    if sample_weighter is not None:
+        sample_weights, weight_stats = sample_weighter.compute_batch_weights(batch)
 
     with accelerator.autocast():
-        if rabc_batch_weights is not None:
+        if sample_weights is not None:
             per_sample_loss, output_dict = policy.forward(batch, reduction="none")
 
             epsilon = 1e-6
-            loss = (per_sample_loss * rabc_batch_weights).sum() / (rabc_batch_weights.sum() + epsilon)
-            output_dict["rabc_mean_weight"] = rabc_batch_stats["raw_mean_weight"]
-            output_dict["rabc_num_zero_weight"] = rabc_batch_stats["num_zero_weight"]
-            output_dict["rabc_num_full_weight"] = rabc_batch_stats["num_full_weight"]
+            loss = (per_sample_loss * sample_weights).sum() / (sample_weights.sum() + epsilon)
+            output_dict.update({f"sample_weight_{key}": value for key, value in weight_stats.items()})
         else:
             loss, output_dict = policy.forward(batch)
 
@@ -228,24 +222,15 @@ def main(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
         logger.info("Creating optimizer and scheduler")
     optimizer, lr_scheduler = make_optimizer_and_scheduler(cfg, policy)
 
-    rabc_weights = None
-    if cfg.use_rabc:
-        from lerobot.utils.rabc import RABCWeights
-
-        chunk_size = getattr(policy.config, "chunk_size", None)
-        if chunk_size is None:
-            raise ValueError("Chunk size is not found in policy config")
-
-        head_mode = getattr(cfg, "rabc_head_mode", "sparse")
-        logger.info(f"Loading SARM progress for RA-BC from {cfg.rabc_progress_path}")
-        logger.info(f"Using chunk_size={chunk_size} from policy config, head_mode={head_mode}")
-        rabc_weights = RABCWeights(
-            progress_path=cfg.rabc_progress_path,
-            chunk_size=chunk_size,
-            head_mode=head_mode,
-            kappa=getattr(cfg, "rabc_kappa", 0.01),
-            epsilon=getattr(cfg, "rabc_epsilon", 1e-6),
-            device=device,
+    sample_weighter = None
+    if cfg.sample_weighting is not None:
+        logger.info(f"Creating sample weighter: {cfg.sample_weighting.type}")
+        sample_weighter = make_sample_weighter(
+            cfg.sample_weighting,
+            policy,
+            device,
+            dataset_root=cfg.dataset.root,
+            dataset_repo_id=cfg.dataset.repo_id,
         )
 
     step = 0
@@ -342,7 +327,7 @@ def main(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
             cfg.optimizer.grad_clip_norm,
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
-            rabc_weights_provider=rabc_weights,
+            sample_weighter=sample_weighter,
         )
 
         step += 1
@@ -357,15 +342,9 @@ def main(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                 wandb_log_dict = train_tracker.to_dict()
                 if output_dict:
                     wandb_log_dict.update(output_dict)
-                if rabc_weights is not None:
-                    rabc_stats = rabc_weights.get_stats()
-                    wandb_log_dict.update(
-                        {
-                            "rabc_delta_mean": rabc_stats["delta_mean"],
-                            "rabc_delta_std": rabc_stats["delta_std"],
-                            "rabc_num_frames": rabc_stats["num_frames"],
-                        }
-                    )
+                if sample_weighter is not None:
+                    weighter_stats = sample_weighter.get_stats()
+                    wandb_log_dict.update({f"sample_weighting/{k}": v for k, v in weighter_stats.items()})
                 wandb_logger.log_dict(wandb_log_dict, step)
             train_tracker.reset_averages()
 
@@ -463,7 +442,11 @@ if __name__ == "__main__":
     dataset_name = "akuramshin/robocasa_coffeepressbutton_dex"
     dataset_metadata = LeRobotDatasetMetadata(dataset_name)
     features = dataset_to_policy_features(dataset_metadata.features)
-    input_images = ["observation.images.robot0_agentview_left", "observation.images.robot0_agentview_right", "observation.images.robot0_eye_in_hand"]
+    input_images = [
+        "observation.images.robot0_agentview_left",
+        "observation.images.robot0_agentview_right",
+        "observation.images.robot0_eye_in_hand",
+    ]
     input_state = ["observation.state"]
     output_actions = ["action"]
     input_features = {key: features[key] for key in input_images + input_state}
@@ -472,7 +455,7 @@ if __name__ == "__main__":
     # Replace this with draccus parsing for the main function
     cfg = TrainPipelineConfig(
         dataset=DatasetConfig(repo_id=dataset_name, video_backend="pyav"),
-        env=RoboCasaEnvConfig(
+        env=RoboCasaEnv(
             task="CoffeePressButton",
             robot="PandaDexLeapRHOmron",
             camera_name="robot0_agentview_left,robot0_agentview_right,robot0_eye_in_hand,robot0_agentview_center",
