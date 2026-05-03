@@ -557,7 +557,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 if wandb_logger:
                     wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                    wandb_logger.log_video(eval_info["overall"]["video_paths"][0], step, mode="eval")
+                    wandb_logger.log_video(eval_info["overall"]["video_paths"][0][0:3], step, mode="eval")
 
             accelerator.wait_for_everyone()
 
