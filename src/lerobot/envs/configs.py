@@ -747,6 +747,87 @@ class RoboCasaEnv(EnvConfig):
             env_cls=env_cls,
         )
 
+
+@EnvConfig.register_subclass("dexmimicgen")
+@dataclass
+class DexMimicGenEnv(EnvConfig):
+    task: str | None = "SingleArmDrawerCleanup"
+    dexmimicgen_path: str | None = "~/dexmimicgen"
+    robots: list[str] | None = None
+    fps: int = 20
+    episode_length: int = 400
+    obs_type: str = "pixels_agent_pos"
+    state_mode: str = "joint_gripper"
+    render_mode: str = "rgb_array"
+    camera_name: str = "agentview,robot0_eye_in_hand"
+    camera_name_mapping: dict[str, str] | None = None
+    primary_observation_height: int = 256
+    primary_observation_width: int = 256
+    wrist_observation_height: int = 128
+    wrist_observation_width: int = 128
+    action_dim: int = 12
+    state_dim: int = 13
+    gripper_qpos_indices: tuple[int, ...] = (0, 2, 4, 6, 8, 11)
+    features: dict[str, PolicyFeature] = field(default_factory=lambda: {})
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/agentview_image": f"{OBS_IMAGES}.agentview",
+            "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.robot0_eye_in_hand",
+        }
+    )
+
+    def __post_init__(self):
+        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
+
+        if self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(self.state_dim,))
+        elif self.obs_type != "pixels":
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+        self.features["pixels/agentview_image"] = PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(self.primary_observation_height, self.primary_observation_width, 3),
+        )
+        self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(self.wrist_observation_height, self.wrist_observation_width, 3),
+        )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "dexmimicgen_path": self.dexmimicgen_path,
+            "robots": self.robots,
+            "obs_type": self.obs_type,
+            "state_mode": self.state_mode,
+            "render_mode": self.render_mode,
+            "camera_name": self.camera_name,
+            "camera_name_mapping": self.camera_name_mapping,
+            "camera_sizes": {
+                "agentview": (self.primary_observation_height, self.primary_observation_width),
+                "robot0_eye_in_hand": (self.wrist_observation_height, self.wrist_observation_width),
+            },
+            "gripper_qpos_indices": self.gripper_qpos_indices,
+            "control_freq": self.fps,
+            "max_episode_steps": self.episode_length,
+        }
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .dexmimicgen import create_dexmimicgen_envs
+
+        if self.task is None:
+            raise ValueError("DexMimicGenEnv requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_dexmimicgen_envs(
+            task=self.task,
+            n_envs=n_envs,
+            camera_name=self.camera_name,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+        )
+
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
 class IsaaclabArenaEnv(HubEnvConfig):

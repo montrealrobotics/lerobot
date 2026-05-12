@@ -31,6 +31,7 @@ import robosuite
 from gymnasium import spaces
 from robosuite.controllers import load_composite_controller_config, load_part_controller_config
 
+from lerobot.envs.utils import _LazyAsyncVectorEnv
 from lerobot.utils.constants import HF_LEROBOT_HOME
 
 
@@ -373,7 +374,7 @@ class RoboCasaEnv(gym.Env):
         """Render the environment using cached images from the last step/reset."""
         if self._last_rendered_images is None:
             raise RuntimeError("render() called before reset(). Call reset() first.")
-        return self._last_rendered_images["robot0_agentview_center"]
+        return self._last_rendered_images["robot0_agentview_right"]
 
     def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
         """Format raw observations from RoboCasa into the expected format."""
@@ -602,7 +603,10 @@ def create_robocasa_envs(
         gym_kwargs=gym_kwargs,
         ep_metas=ep_metas,
     )
-    out[suite_name][task_id] = env_cls(fns)
+    if env_cls is gym.vector.AsyncVectorEnv:
+        out[suite_name][task_id] = _LazyAsyncVectorEnv(fns)
+    else:
+        out[suite_name][task_id] = env_cls(fns)
     print(f"Built vec env | suite={suite_name} | task_id={task_id} | n_envs={n_envs}")
 
     # return plain dicts for predictability
