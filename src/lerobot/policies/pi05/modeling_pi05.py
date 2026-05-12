@@ -81,9 +81,7 @@ class CategorySpecificLinear(nn.Module):
         if cat_ids.ndim != 1:
             cat_ids = cat_ids.reshape(-1)
         if x.shape[0] != cat_ids.shape[0]:
-            raise ValueError(
-                f"Expected one category id per batch item, got {x.shape[0]=}, {cat_ids.shape=}"
-            )
+            raise ValueError(f"Expected one category id per batch item, got {x.shape[0]=}, {cat_ids.shape=}")
         selected_w = self.W[cat_ids]
         selected_b = self.b[cat_ids]
         return torch.bmm(x, selected_w) + selected_b.unsqueeze(1)
@@ -666,9 +664,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             return self._default_embodiment_ids(batch_size, device)
         embodiment_ids = embodiment_ids.to(device=device, dtype=torch.long).reshape(-1)
         if embodiment_ids.shape[0] != batch_size:
-            raise ValueError(
-                f"Expected {batch_size} embodiment ids, got shape {tuple(embodiment_ids.shape)}"
-            )
+            raise ValueError(f"Expected {batch_size} embodiment ids, got shape {tuple(embodiment_ids.shape)}")
         if torch.any((embodiment_ids < 0) | (embodiment_ids >= self.config.max_num_embodiments)):
             raise ValueError(
                 "Embodiment ids must be in "
@@ -841,9 +837,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 return self.action_out_proj(suffix_out)
             return self.action_out_proj(suffix_out, embodiment_ids)
 
-        embodiment_ids = self._validate_embodiment_ids(
-            embodiment_ids, suffix_out.shape[0], suffix_out.device
-        )
+        embodiment_ids = self._validate_embodiment_ids(embodiment_ids, suffix_out.shape[0], suffix_out.device)
         v_t = self._apply_checkpoint(action_out_proj_func, suffix_out, embodiment_ids)
 
         return F.mse_loss(u_t, v_t, reduction="none")
@@ -969,9 +963,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
-        embodiment_ids = self._validate_embodiment_ids(
-            embodiment_ids, suffix_out.shape[0], suffix_out.device
-        )
+        embodiment_ids = self._validate_embodiment_ids(embodiment_ids, suffix_out.shape[0], suffix_out.device)
         if embodiment_ids is None:
             return self.action_out_proj(suffix_out)
         return self.action_out_proj(suffix_out, embodiment_ids)
@@ -1173,14 +1165,10 @@ class PI05Policy(PreTrainedPolicy):
                 continue
 
             if model_config.use_category_specific_action_proj:
-                if new_key.endswith("action_in_proj.weight") or new_key.endswith(
-                    "action_out_proj.weight"
-                ):
+                if new_key.endswith("action_in_proj.weight") or new_key.endswith("action_out_proj.weight"):
                     new_key = new_key.removesuffix("weight") + "W"
                     value = self._expand_dense_action_proj_weight(new_key, value)
-                elif new_key.endswith("action_in_proj.bias") or new_key.endswith(
-                    "action_out_proj.bias"
-                ):
+                elif new_key.endswith("action_in_proj.bias") or new_key.endswith("action_out_proj.bias"):
                     new_key = new_key.removesuffix("bias") + "b"
                     value = self._expand_dense_action_proj_bias(new_key, value)
 
@@ -1219,9 +1207,7 @@ class PI05Policy(PreTrainedPolicy):
         slot = self.config.pretrained_action_proj_category
         expected_shape = (module.out_features,)
         if tuple(bias.shape) != expected_shape:
-            raise ValueError(
-                f"Cannot expand {key}: expected dense bias {expected_shape}, got {bias.shape}"
-            )
+            raise ValueError(f"Cannot expand {key}: expected dense bias {expected_shape}, got {bias.shape}")
         expanded[slot] = bias
         return expanded
 
@@ -1303,9 +1289,12 @@ class PI05Policy(PreTrainedPolicy):
                 img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
 
             images.append(img)
-            # Create mask (all ones for real images)
             bsize = img.shape[0]
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            image_is_pad = batch.get(f"{key}_is_pad")
+            if image_is_pad is not None:
+                mask = ~image_is_pad.to(device=device, dtype=torch.bool).reshape(bsize)
+            else:
+                mask = torch.ones(bsize, dtype=torch.bool, device=device)
             img_masks.append(mask)
 
         # Create image features not present in the batch as fully 0 padded images
@@ -1320,7 +1309,7 @@ class PI05Policy(PreTrainedPolicy):
     def prepare_action(self, batch):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
-        return actions
+        return actions.to(dtype=torch.float32)
 
     def prepare_embodiment_ids(self, batch: dict[str, Tensor]) -> Tensor | None:
         if not self.config.use_category_specific_action_proj:
@@ -1405,26 +1394,40 @@ class PI05Policy(PreTrainedPolicy):
         embodiment_ids = self.prepare_embodiment_ids(batch)
 
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(
-            images, img_masks, tokens, masks, actions, noise, time, embodiment_ids
-        )
+        losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time, embodiment_ids)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
+        valid_loss_mask = torch.ones_like(losses, dtype=torch.bool)
+
+        actions_is_pad = batch.get("action_is_pad")
+        if actions_is_pad is not None:
+            valid_loss_mask &= ~actions_is_pad.to(device=losses.device, dtype=torch.bool).unsqueeze(-1)
+
+        action_dim_is_pad = batch.get("action_dim_is_pad")
+        if action_dim_is_pad is not None:
+            valid_action_dims = ~action_dim_is_pad.to(device=losses.device, dtype=torch.bool)
+            valid_loss_mask &= valid_action_dims[:, None, : losses.shape[-1]]
+
+        masked_losses = losses * valid_loss_mask.to(dtype=losses.dtype)
 
         loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
+            "loss_per_dim": (masked_losses.sum(dim=[0, 1]) / valid_loss_mask.sum(dim=[0, 1]).clamp_min(1))
+            .detach()
+            .cpu()
+            .numpy()
+            .tolist(),
         }
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            per_sample_loss = masked_losses.sum(dim=(1, 2)) / valid_loss_mask.sum(dim=(1, 2)).clamp_min(1)
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
             # Default: return scalar mean loss
-            loss = losses.mean()
+            loss = masked_losses.sum() / valid_loss_mask.sum().clamp_min(1)
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
@@ -1437,9 +1440,7 @@ class PI05Policy(PreTrainedPolicy):
         else:
             common_projections = f"action_in_proj|action_out_proj|{common_projections}"
 
-        target_modules = (
-            rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
-        )
+        target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
         return {
             "target_modules": target_modules,
             "modules_to_save": modules_to_save,

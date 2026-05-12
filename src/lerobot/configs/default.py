@@ -26,7 +26,16 @@ class DatasetConfig:
     # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
-    repo_id: str
+    repo_id: str | list[str]
+    # Optional per-dataset embodiment ids for multi-dataset training. When set, the corresponding
+    # "embodiment_id" is inserted into every sample from that dataset.
+    embodiment_ids: list[int] | None = None
+    # Optional per-dataset normalization ids for multi-dataset training. Datasets that share an id share
+    # normalization statistics while still remaining separate datasets for sampling and logging.
+    normalization_ids: list[int] | None = None
+    # Optional per-dataset mixture weights. These are interpreted as dataset-level probabilities, not
+    # per-frame weights, so each frame receives weight sampling_weight_i / num_frames_i.
+    sampling_weights: list[float] | None = None
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
@@ -55,7 +64,7 @@ class DatasetConfig:
 class WandBConfig:
     enable: bool = False
     # Set to true to disable saving an artifact despite training.save_checkpoint=True
-    disable_artifact: bool = False
+    disable_artifact: bool = True
     project: str = "lerobot"
     entity: str | None = None
     notes: str | None = None

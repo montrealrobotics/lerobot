@@ -26,7 +26,7 @@ from lerobot.utils.constants import ACTION, IMAGENET_STATS, OBS_PREFIX, REWARD
 
 from .dataset_metadata import LeRobotDatasetMetadata
 from .lerobot_dataset import LeRobotDataset
-from .multi_dataset import MultiLeRobotDataset
+from .multi_dataset import MultiLeRobotDataset, resolve_dataset_repo_spec
 from .streaming_dataset import StreamingLeRobotDataset
 
 
@@ -111,13 +111,24 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
                 return_uint8=True,
             )
     else:
-        raise NotImplementedError("The MultiLeRobotDataset isn't supported for now.")
+        repo_ids = cfg.dataset.repo_id
+        first_repo_id, first_root = resolve_dataset_repo_spec(
+            repo_ids[0], root=cfg.dataset.root, revision=cfg.dataset.revision
+        )
+        ds_meta = LeRobotDatasetMetadata(first_repo_id, root=first_root, revision=cfg.dataset.revision)
+        delta_timestamps = resolve_delta_timestamps(cfg.trainable_config, ds_meta)
         dataset = MultiLeRobotDataset(
-            cfg.dataset.repo_id,
-            # TODO(aliberts): add proper support for multi dataset
-            # delta_timestamps=delta_timestamps,
+            repo_ids,
+            root=cfg.dataset.root,
+            episodes=None,
+            delta_timestamps=delta_timestamps,
             image_transforms=image_transforms,
             video_backend=cfg.dataset.video_backend,
+            revision=cfg.dataset.revision,
+            return_uint8=True,
+            embodiment_ids=cfg.dataset.embodiment_ids,
+            normalization_ids=cfg.dataset.normalization_ids,
+            tolerances_s=dict.fromkeys(repo_ids, cfg.tolerance_s),
         )
         logging.info(
             "Multiple datasets were provided. Applied the following index mapping to the provided datasets: "

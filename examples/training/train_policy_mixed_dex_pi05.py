@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 # Copyright 2024 The HuggingFace Inc. team. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,38 +15,56 @@
 # limitations under the License.
 
 """
-Finetune pi05 on the RoboCasa dexterous-hand CoffeePressButton dataset.
+Finetune pi05 on a mixture of DexMimicGen and RoboCasa dexterous simulation datasets.
 
-This mirrors examples/training/train_policy_casa_dex.py for dataset/env selection, but
-loads lerobot/pi05_base, freezes the VLM backbone, and trains the action expert plus a
-fresh category-specific action encoder/decoder slot for the dexterous embodiment.
+The three DexMimicGen datasets share one category-specific action projection slot, and
+the RoboCasa CoffeePressButton dataset uses a second slot.
 
 Usage:
-    python examples/training/train_policy_casa_dex_pi05.py
+    python examples/training/train_policy_mixed_dex_pi05.py
 """
 
 import datetime as dt
 from pathlib import Path
 
-from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import NormalizationMode
-from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.envs.configs import RoboCasaEnv
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.scripts.lerobot_train import train
 from lerobot.utils.import_utils import register_third_party_plugins
 
 PI05_BASE_MODEL = "lerobot/pi05_base"
-ROBOCASA_DEX_EMBODIMENT_ID = 31
 SCRATCH_OUTPUT_ROOT = Path("/network/scratch/a/artur.kuramshin/lerobot/outputs/train")
-WRIST_IMAGE_KEY = "observation.images.robot0_eye_in_hand"
-EXTERNAL_IMAGE_KEY = "observation.images.robot0_agentview_left"
-RANDOM_EXTERNAL_IMAGE_KEYS = [
-    "observation.images.robot0_agentview_left",
-    "observation.images.robot0_agentview_right",
+
+DEXMIMICGEN_EMBODIMENT_ID = 30
+ROBOCASA_EMBODIMENT_ID = 31
+DEXMIMICGEN_NORMALIZATION_ID = 0
+ROBOCASA_NORMALIZATION_ID = 1
+MAX_BIMANUAL_DEX_STATE_DIM = 64
+MAX_BIMANUAL_DEX_ACTION_DIM = 64
+
+DEXMIMICGEN_DATASETS = "akuramshin/dexmimicgen"
+DATASET_REPO_IDS = [
+    f"{DEXMIMICGEN_DATASETS}:bimanual_panda_hand.BoxCleanup",
+    f"{DEXMIMICGEN_DATASETS}:bimanual_panda_hand.DrawerCleanup",
+    f"{DEXMIMICGEN_DATASETS}:bimanual_panda_hand.LiftTray",
+    "akuramshin/robocasa_coffeepressbutton_dex_augstyle",
 ]
+DATASET_EMBODIMENT_IDS = [
+    DEXMIMICGEN_EMBODIMENT_ID,
+    DEXMIMICGEN_EMBODIMENT_ID,
+    DEXMIMICGEN_EMBODIMENT_ID,
+    ROBOCASA_EMBODIMENT_ID,
+]
+DATASET_NORMALIZATION_IDS = [
+    DEXMIMICGEN_NORMALIZATION_ID,
+    DEXMIMICGEN_NORMALIZATION_ID,
+    DEXMIMICGEN_NORMALIZATION_ID,
+    ROBOCASA_NORMALIZATION_ID,
+]
+DATASET_SAMPLING_WEIGHTS = [1.0, 1.0, 1.0, 3.0]
 
 
 def make_timestamped_output_dir(root: Path, cfg: TrainPipelineConfig) -> Path:
@@ -58,41 +78,21 @@ def make_timestamped_output_dir(root: Path, cfg: TrainPipelineConfig) -> Path:
     return root / f"{now:%Y-%m-%d}" / f"{now:%H-%M-%S}_{job_name}"
 
 
-def make_visual_feature(dataset_metadata: LeRobotDatasetMetadata, key: str) -> PolicyFeature:
-    shape = tuple(dataset_metadata.features[key]["shape"])
-    if len(shape) != 3:
-        raise ValueError(f"Expected image feature '{key}' to have 3 dimensions, got {shape}.")
-
-    if shape[0] == 3:
-        chw_shape = shape
-    elif shape[-1] == 3:
-        chw_shape = (shape[-1], shape[0], shape[1])
-    else:
-        raise ValueError(f"Expected image feature '{key}' to be RGB, got {shape}.")
-
-    return PolicyFeature(type=FeatureType.VISUAL, shape=chw_shape)
-
-
 def make_config() -> TrainPipelineConfig:
-    dataset_name = "akuramshin/robocasa_coffeepressbutton_dex_augstyle"
-    # dataset_name = "akuramshin/robocasa_coffeepressbutton-kitchen_coffee"
-    dataset_metadata = LeRobotDatasetMetadata(dataset_name)
-    action_dim = dataset_metadata.features["action"]["shape"][0]
-    state_dim = dataset_metadata.features["observation.state"]["shape"][0]
-
     cfg = TrainPipelineConfig(
-        dataset=DatasetConfig(repo_id=dataset_name, video_backend="pyav"),
+        dataset=DatasetConfig(
+            repo_id=DATASET_REPO_IDS,
+            embodiment_ids=DATASET_EMBODIMENT_IDS,
+            normalization_ids=DATASET_NORMALIZATION_IDS,
+            sampling_weights=DATASET_SAMPLING_WEIGHTS,
+            video_backend="pyav",
+        ),
         env=RoboCasaEnv(
             task="CoffeePressButton",
             robot="PandaDexLeapRHOmron",
-            # robot="PandaOmron",
-            camera_name=(
-                "robot0_agentview_left,"
-                "robot0_agentview_right,"
-                "robot0_eye_in_hand,"
-                "robot0_agentview_center"
-            ),
+            camera_name="robot0_agentview_right,robot0_eye_in_hand",
         ),
+        job_name="mixed_dex_pi05",
         resume=False,
         policy=PI05Config(
             pretrained_path=Path(PI05_BASE_MODEL),
@@ -104,21 +104,14 @@ def make_config() -> TrainPipelineConfig:
             train_expert_only=True,
             chunk_size=32,
             n_action_steps=16,
-            max_state_dim=max(32, state_dim),
-            max_action_dim=max(32, action_dim),
-            input_features={
-                "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
-                WRIST_IMAGE_KEY: make_visual_feature(dataset_metadata, WRIST_IMAGE_KEY),
-                EXTERNAL_IMAGE_KEY: make_visual_feature(dataset_metadata, EXTERNAL_IMAGE_KEY),
-            },
-            random_external_camera_keys=RANDOM_EXTERNAL_IMAGE_KEYS,
-            random_external_camera_output_key=EXTERNAL_IMAGE_KEY,
-            random_external_camera_p=0.5,
+            max_state_dim=MAX_BIMANUAL_DEX_STATE_DIM,
+            max_action_dim=MAX_BIMANUAL_DEX_ACTION_DIM,
             force_current_processor_config=True,
             use_category_specific_action_proj=True,
             max_num_embodiments=32,
             pretrained_action_proj_category=0,
-            default_embodiment_id=ROBOCASA_DEX_EMBODIMENT_ID,
+            default_embodiment_id=ROBOCASA_EMBODIMENT_ID,
+            default_normalization_id=ROBOCASA_NORMALIZATION_ID,
             normalization_mapping={
                 "VISUAL": NormalizationMode.IDENTITY,
                 "STATE": NormalizationMode.QUANTILES,
@@ -131,12 +124,13 @@ def make_config() -> TrainPipelineConfig:
             optimizer_grad_clip_norm=1.0,
         ),
         wandb=WandBConfig(enable=True, project="lerobot-dex"),
-        steps=10_000,
+        steps=20_000,
         eval_freq=500,
         save_freq=1_000,
         log_freq=50,
+        tolerance_s=1e-3,
         eval=EvalConfig(n_episodes=20, batch_size=2),
-        batch_size=32,
+        batch_size=64,
         num_workers=4,
     )
     cfg.output_dir = make_timestamped_output_dir(SCRATCH_OUTPUT_ROOT, cfg)
