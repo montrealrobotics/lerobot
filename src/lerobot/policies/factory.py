@@ -224,6 +224,8 @@ class ProcessorConfigKwargs(TypedDict, total=False):
     preprocessor_overrides: dict[str, Any] | None
     postprocessor_overrides: dict[str, Any] | None
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None
+    dataset_stats_by_route: dict[int, dict[str, dict[str, torch.Tensor]]] | None
+    route_feature_shapes: dict[int, dict[str, tuple[int, ...]]] | None
 
 
 def make_pre_post_processors(
@@ -356,6 +358,8 @@ def make_pre_post_processors(
         processors = make_pi05_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            dataset_stats_by_route=kwargs.get("dataset_stats_by_route"),
+            route_feature_shapes=kwargs.get("route_feature_shapes"),
         )
 
     elif isinstance(policy_cfg, SACConfig):

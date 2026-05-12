@@ -581,6 +581,7 @@ def eval_main(cfg: EvalPipelineConfig):
             videos_dir=Path(cfg.output_dir) / "videos",
             start_seed=cfg.seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
+            close_envs_after_eval=True,
         )
         print("Overall Aggregated Metrics:")
         print(info["overall"])
@@ -711,6 +712,7 @@ def eval_policy_all(
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    close_envs_after_eval: bool = False,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -718,6 +720,10 @@ def eval_policy_all(
     accumulates per-group and overall statistics, and returns the same aggregate metrics
     schema as the single-env evaluator (avg_sum_reward / avg_max_reward / pc_success / timings)
     plus per-task infos.
+
+    By default, envs remain open because callers such as training reuse the same eval envs
+    across checkpoints. Standalone eval can set close_envs_after_eval=True to release task envs
+    as soon as they finish.
     """
     start_t = time.time()
 
@@ -780,10 +786,11 @@ def eval_policy_all(
                 _accumulate_to(tg, metrics)
                 per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
             finally:
-                env.close()
-                # Prefetch next task's workers *after* closing current env to prevent
+                if close_envs_after_eval:
+                    env.close()
+                # Prefetch next task's workers *after* optionally closing current env to prevent
                 # GPU memory overlap between consecutive tasks.
-                if i + 1 < len(tasks):
+                if close_envs_after_eval and i + 1 < len(tasks):
                     next_env = tasks[i + 1][2]
                     if hasattr(next_env, "_ensure"):
                         prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
@@ -801,7 +808,8 @@ def eval_policy_all(
                     _accumulate_to(tg, metrics)
                     per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
                 finally:
-                    env.close()
+                    if close_envs_after_eval:
+                        env.close()
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):

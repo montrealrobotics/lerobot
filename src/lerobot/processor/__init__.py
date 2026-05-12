@@ -62,7 +62,13 @@ from .hil_processor import (
     TimeLimitProcessorStep,
 )
 from .newline_task_processor import NewLineTaskProcessorStep
-from .normalize_processor import NormalizerProcessorStep, UnnormalizerProcessorStep, hotswap_stats
+from .normalize_processor import (
+    NormalizerProcessorStep,
+    RoutedNormalizerProcessorStep,
+    RoutedUnnormalizerProcessorStep,
+    UnnormalizerProcessorStep,
+    hotswap_stats,
+)
 from .observation_processor import VanillaObservationProcessorStep
 from .pipeline import (
     ActionProcessorStep,
@@ -132,6 +138,8 @@ __all__ = [
     "MapTensorToDeltaActionDictStep",
     "NewLineTaskProcessorStep",
     "NormalizerProcessorStep",
+    "RoutedNormalizerProcessorStep",
+    "RoutedUnnormalizerProcessorStep",
     "Numpy2TorchActionProcessorStep",
     "ObservationProcessorStep",
     "PolicyAction",

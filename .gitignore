@@ -44,6 +44,7 @@ develop-eggs/
 .installed.cfg
 *.egg
 MANIFEST
+slurm-*.out
 lib/
 lib64/
 

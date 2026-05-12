@@ -191,7 +191,41 @@ class TrainPipelineConfig(HubMixin):
             self.output_dir = Path("outputs/train") / train_dir
 
         if isinstance(self.dataset.repo_id, list):
-            raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
+            if self.dataset.streaming:
+                raise NotImplementedError("Streaming multi-dataset training is not currently implemented.")
+            if self.dataset.episodes is not None:
+                raise NotImplementedError(
+                    "Selecting episodes with a list of datasets is not currently implemented."
+                )
+            if self.dataset.embodiment_ids is not None and len(self.dataset.embodiment_ids) != len(
+                self.dataset.repo_id
+            ):
+                raise ValueError(
+                    "dataset.embodiment_ids must have one entry per dataset repo_id, got "
+                    f"{len(self.dataset.embodiment_ids)} ids for {len(self.dataset.repo_id)} datasets."
+                )
+            if self.dataset.normalization_ids is not None and len(self.dataset.normalization_ids) != len(
+                self.dataset.repo_id
+            ):
+                raise ValueError(
+                    "dataset.normalization_ids must have one entry per dataset repo_id, got "
+                    f"{len(self.dataset.normalization_ids)} ids for {len(self.dataset.repo_id)} datasets."
+                )
+            if self.dataset.sampling_weights is not None:
+                if len(self.dataset.sampling_weights) != len(self.dataset.repo_id):
+                    raise ValueError(
+                        "dataset.sampling_weights must have one entry per dataset repo_id, got "
+                        f"{len(self.dataset.sampling_weights)} weights for {len(self.dataset.repo_id)} datasets."
+                    )
+                if any(weight < 0 for weight in self.dataset.sampling_weights):
+                    raise ValueError("dataset.sampling_weights must be non-negative.")
+                if sum(self.dataset.sampling_weights) <= 0:
+                    raise ValueError("At least one dataset.sampling_weights entry must be positive.")
+        elif self.dataset.normalization_ids is not None or self.dataset.sampling_weights is not None:
+            raise ValueError(
+                "dataset.normalization_ids and dataset.sampling_weights are only supported when "
+                "dataset.repo_id is a list."
+            )
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")

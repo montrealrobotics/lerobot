@@ -63,6 +63,28 @@ class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+    embodiment_ids: Tensor | None
+
+
+class CategorySpecificLinear(nn.Module):
+    """A per-category linear layer with the same batch semantics as GR00T."""
+
+    def __init__(self, num_categories: int, input_dim: int, output_dim: int):
+        super().__init__()
+        self.num_categories = num_categories
+        self.in_features = input_dim
+        self.out_features = output_dim
+        self.W = nn.Parameter(0.02 * torch.randn(num_categories, input_dim, output_dim))
+        self.b = nn.Parameter(torch.zeros(num_categories, output_dim))
+
+    def forward(self, x: Tensor, cat_ids: Tensor) -> Tensor:
+        if cat_ids.ndim != 1:
+            cat_ids = cat_ids.reshape(-1)
+        if x.shape[0] != cat_ids.shape[0]:
+            raise ValueError(f"Expected one category id per batch item, got {x.shape[0]=}, {cat_ids.shape=}")
+        selected_w = self.W[cat_ids]
+        selected_b = self.b[cat_ids]
+        return torch.bmm(x, selected_w) + selected_b.unsqueeze(1)
 
 
 def get_safe_dtype(target_dtype, device_type):
@@ -574,8 +596,16 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             train_expert_only=config.train_expert_only,
         )
 
-        self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
-        self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
+        if config.use_category_specific_action_proj:
+            self.action_in_proj = CategorySpecificLinear(
+                config.max_num_embodiments, config.max_action_dim, action_expert_config.width
+            )
+            self.action_out_proj = CategorySpecificLinear(
+                config.max_num_embodiments, action_expert_config.width, config.max_action_dim
+            )
+        else:
+            self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
+            self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
 
         self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
         self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
@@ -616,6 +646,31 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                 func, *args, use_reentrant=False, preserve_rng_state=False, **kwargs
             )
         return func(*args, **kwargs)
+
+    def _default_embodiment_ids(self, batch_size: int, device: torch.device) -> Tensor:
+        return torch.full(
+            (batch_size,),
+            self.config.default_embodiment_id,
+            dtype=torch.long,
+            device=device,
+        )
+
+    def _validate_embodiment_ids(
+        self, embodiment_ids: Tensor | None, batch_size: int, device: torch.device
+    ) -> Tensor | None:
+        if not self.config.use_category_specific_action_proj:
+            return None
+        if embodiment_ids is None:
+            return self._default_embodiment_ids(batch_size, device)
+        embodiment_ids = embodiment_ids.to(device=device, dtype=torch.long).reshape(-1)
+        if embodiment_ids.shape[0] != batch_size:
+            raise ValueError(f"Expected {batch_size} embodiment ids, got shape {tuple(embodiment_ids.shape)}")
+        if torch.any((embodiment_ids < 0) | (embodiment_ids >= self.config.max_num_embodiments)):
+            raise ValueError(
+                "Embodiment ids must be in "
+                f"[0, {self.config.max_num_embodiments}), got {embodiment_ids.detach().cpu().tolist()}"
+            )
+        return embodiment_ids
 
     def _prepare_attention_masks_4d(self, att_2d_masks):
         """Helper method to prepare 4D attention masks for transformer."""
@@ -681,11 +736,14 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks
 
-    def embed_suffix(self, noisy_actions, timestep):
+    def embed_suffix(self, noisy_actions, timestep, embodiment_ids=None):
         """Embed noisy_actions, timestep to prepare for Expert Gemma processing."""
         embs = []
         pad_masks = []
         att_masks = []
+        embodiment_ids = self._validate_embodiment_ids(
+            embodiment_ids, noisy_actions.shape[0], noisy_actions.device
+        )
 
         # Embed timestep using sine-cosine positional encoding
         time_emb = create_sinusoidal_pos_embedding(
@@ -698,10 +756,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time_emb = time_emb.type(dtype=timestep.dtype)
 
         # Fuse timestep + action information using an MLP
-        def action_proj_func(noisy_actions):
-            return self.action_in_proj(noisy_actions)
+        def action_proj_func(noisy_actions, embodiment_ids):
+            if embodiment_ids is None:
+                return self.action_in_proj(noisy_actions)
+            return self.action_in_proj(noisy_actions, embodiment_ids)
 
-        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions)
+        action_emb = self._apply_checkpoint(action_proj_func, noisy_actions, embodiment_ids)
 
         def time_mlp_func(time_emb):
             x = self.time_mlp_in(time_emb)
@@ -728,14 +788,16 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise, time) -> Tensor:
+    def forward(self, images, img_masks, tokens, masks, actions, noise, time, embodiment_ids=None) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         time_expanded = time[:, None, None]
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(
+            x_t, time, embodiment_ids
+        )
 
         if (
             self.paligemma_with_expert.paligemma.model.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -770,10 +832,13 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
 
-        def action_out_proj_func(suffix_out):
-            return self.action_out_proj(suffix_out)
+        def action_out_proj_func(suffix_out, embodiment_ids):
+            if embodiment_ids is None:
+                return self.action_out_proj(suffix_out)
+            return self.action_out_proj(suffix_out, embodiment_ids)
 
-        v_t = self._apply_checkpoint(action_out_proj_func, suffix_out)
+        embodiment_ids = self._validate_embodiment_ids(embodiment_ids, suffix_out.shape[0], suffix_out.device)
+        v_t = self._apply_checkpoint(action_out_proj_func, suffix_out, embodiment_ids)
 
         return F.mse_loss(u_t, v_t, reduction="none")
 
@@ -832,6 +897,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
                     past_key_values=past_key_values,
                     x_t=input_x_t,
                     timestep=current_timestep,
+                    embodiment_ids=kwargs.get("embodiment_ids"),
                 )
 
             if self._rtc_enabled():
@@ -863,9 +929,12 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         past_key_values,
         x_t,
         timestep,
+        embodiment_ids=None,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, timestep)
+        suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(
+            x_t, timestep, embodiment_ids
+        )
 
         suffix_len = suffix_pad_masks.shape[1]
         batch_size = prefix_pad_masks.shape[0]
@@ -894,7 +963,10 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
-        return self.action_out_proj(suffix_out)
+        embodiment_ids = self._validate_embodiment_ids(embodiment_ids, suffix_out.shape[0], suffix_out.device)
+        if embodiment_ids is None:
+            return self.action_out_proj(suffix_out)
+        return self.action_out_proj(suffix_out, embodiment_ids)
 
 
 class PI05Policy(PreTrainedPolicy):
@@ -1092,6 +1164,14 @@ class PI05Policy(PreTrainedPolicy):
                 logging.warning(f"Skipping state_proj key in pi05 mode: {key}")
                 continue
 
+            if model_config.use_category_specific_action_proj:
+                if new_key.endswith("action_in_proj.weight") or new_key.endswith("action_out_proj.weight"):
+                    new_key = new_key.removesuffix("weight") + "W"
+                    value = self._expand_dense_action_proj_weight(new_key, value)
+                elif new_key.endswith("action_in_proj.bias") or new_key.endswith("action_out_proj.bias"):
+                    new_key = new_key.removesuffix("bias") + "b"
+                    value = self._expand_dense_action_proj_bias(new_key, value)
+
             # Handle vision tower embedding layer potential differences
             if "patch_embedding" in key:
                 # Some checkpoints might have this, but current model expects different structure
@@ -1108,6 +1188,28 @@ class PI05Policy(PreTrainedPolicy):
             fixed_state_dict[new_key] = value
 
         return fixed_state_dict
+
+    def _expand_dense_action_proj_weight(self, key: str, weight: Tensor) -> Tensor:
+        module = self.model.action_in_proj if "action_in_proj" in key else self.model.action_out_proj
+        expanded = module.W.detach().clone()
+        slot = self.config.pretrained_action_proj_category
+        expected_shape = (module.out_features, module.in_features)
+        if tuple(weight.shape) != expected_shape:
+            raise ValueError(
+                f"Cannot expand {key}: expected dense weight {expected_shape}, got {weight.shape}"
+            )
+        expanded[slot] = weight.T
+        return expanded
+
+    def _expand_dense_action_proj_bias(self, key: str, bias: Tensor) -> Tensor:
+        module = self.model.action_in_proj if "action_in_proj" in key else self.model.action_out_proj
+        expanded = module.b.detach().clone()
+        slot = self.config.pretrained_action_proj_category
+        expected_shape = (module.out_features,)
+        if tuple(bias.shape) != expected_shape:
+            raise ValueError(f"Cannot expand {key}: expected dense bias {expected_shape}, got {bias.shape}")
+        expanded[slot] = bias
+        return expanded
 
     def get_optim_params(self) -> dict:
         return self.parameters()
@@ -1187,9 +1289,12 @@ class PI05Policy(PreTrainedPolicy):
                 img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
 
             images.append(img)
-            # Create mask (all ones for real images)
             bsize = img.shape[0]
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
+            image_is_pad = batch.get(f"{key}_is_pad")
+            if image_is_pad is not None:
+                mask = ~image_is_pad.to(device=device, dtype=torch.bool).reshape(bsize)
+            else:
+                mask = torch.ones(bsize, dtype=torch.bool, device=device)
             img_masks.append(mask)
 
         # Create image features not present in the batch as fully 0 padded images
@@ -1204,7 +1309,34 @@ class PI05Policy(PreTrainedPolicy):
     def prepare_action(self, batch):
         """Pad action"""
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
-        return actions
+        return actions.to(dtype=torch.float32)
+
+    def prepare_embodiment_ids(self, batch: dict[str, Tensor]) -> Tensor | None:
+        if not self.config.use_category_specific_action_proj:
+            return None
+
+        key = self.config.embodiment_id_key
+        if key in batch and batch[key] is not None:
+            return batch[key]
+
+        if key == "embodiment_id" and "dataset_index" in batch and batch["dataset_index"] is not None:
+            return batch["dataset_index"]
+
+        device = next(self.parameters()).device
+        batch_size = self._infer_batch_size(batch)
+        return self.model._default_embodiment_ids(batch_size, device)
+
+    def _infer_batch_size(self, batch: dict[str, Tensor]) -> int:
+        for key in (OBS_LANGUAGE_TOKENS, ACTION):
+            value = batch.get(key)
+            if isinstance(value, Tensor):
+                return value.shape[0]
+
+        for value in batch.values():
+            if isinstance(value, Tensor):
+                return value.shape[0]
+
+        raise ValueError("Could not infer batch size from batch while preparing embodiment ids.")
 
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
@@ -1233,6 +1365,7 @@ class PI05Policy(PreTrainedPolicy):
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
+        kwargs.setdefault("embodiment_ids", self.prepare_embodiment_ids(batch))
         actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
 
         # Unpad actions to actual action dimension
@@ -1258,36 +1391,57 @@ class PI05Policy(PreTrainedPolicy):
 
         noise = self.model.sample_noise(actions.shape, actions.device)
         time = self.model.sample_time(actions.shape[0], actions.device)
+        embodiment_ids = self.prepare_embodiment_ids(batch)
 
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time)
+        losses = self.model.forward(images, img_masks, tokens, masks, actions, noise, time, embodiment_ids)
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]
         losses = losses[:, :, :original_action_dim]
+        valid_loss_mask = torch.ones_like(losses, dtype=torch.bool)
+
+        actions_is_pad = batch.get("action_is_pad")
+        if actions_is_pad is not None:
+            valid_loss_mask &= ~actions_is_pad.to(device=losses.device, dtype=torch.bool).unsqueeze(-1)
+
+        action_dim_is_pad = batch.get("action_dim_is_pad")
+        if action_dim_is_pad is not None:
+            valid_action_dims = ~action_dim_is_pad.to(device=losses.device, dtype=torch.bool)
+            valid_loss_mask &= valid_action_dims[:, None, : losses.shape[-1]]
+
+        masked_losses = losses * valid_loss_mask.to(dtype=losses.dtype)
 
         loss_dict = {
-            "loss_per_dim": losses.mean(dim=[0, 1]).detach().cpu().numpy().tolist(),
+            "loss_per_dim": (masked_losses.sum(dim=[0, 1]) / valid_loss_mask.sum(dim=[0, 1]).clamp_min(1))
+            .detach()
+            .cpu()
+            .numpy()
+            .tolist(),
         }
 
         if reduction == "none":
             # Return per-sample losses (B,) by averaging over time and action dims
-            per_sample_loss = losses.mean(dim=(1, 2))
+            per_sample_loss = masked_losses.sum(dim=(1, 2)) / valid_loss_mask.sum(dim=(1, 2)).clamp_min(1)
             loss_dict["loss"] = per_sample_loss.mean().item()
             return per_sample_loss, loss_dict
         else:
             # Default: return scalar mean loss
-            loss = losses.mean()
+            loss = masked_losses.sum() / valid_loss_mask.sum().clamp_min(1)
             loss_dict["loss"] = loss.item()
             return loss, loss_dict
 
     def _get_default_peft_targets(self) -> dict[str, any]:
         """Return default PEFT target modules for PI0.5 fine-tuning."""
-        common_projections = (
-            "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
-        )
+        common_projections = "state_proj|time_mlp_in|time_mlp_out|action_time_mlp_in|action_time_mlp_out"
+        modules_to_save = []
+        if self.config.use_category_specific_action_proj:
+            modules_to_save = ["model.action_in_proj", "model.action_out_proj"]
+        else:
+            common_projections = f"action_in_proj|action_out_proj|{common_projections}"
+
         target_modules = rf"(.*\.gemma_expert\..*\.self_attn\.(q|v)_proj|model\.({common_projections}))"
         return {
             "target_modules": target_modules,
-            "modules_to_save": [],
+            "modules_to_save": modules_to_save,
         }

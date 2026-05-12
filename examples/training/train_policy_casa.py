@@ -468,7 +468,7 @@ if __name__ == "__main__":
             },
             push_to_hub=False,
         ),
-        wandb=WandBConfig(enable=True, project="lerobot-robocasa"),
+        wandb=WandBConfig(enable=True, project="lerobot-dex"),
         steps=2000,
         eval_freq=500,
         log_freq=25,

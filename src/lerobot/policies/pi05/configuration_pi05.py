@@ -69,6 +69,13 @@ class PI05Config(PreTrainedConfig):
 
     tokenizer_max_length: int = 200  # see openpi `__post_init__`
 
+    # Optional camera selection used to match OpenPI/pi0.5 pretraining layouts
+    # that include a wrist camera plus one external camera.
+    random_external_camera_keys: list[str] = field(default_factory=list)
+    random_external_camera_output_key: str | None = None
+    random_external_camera_p: float = 0.5
+    force_current_processor_config: bool = False
+
     normalization_mapping: dict[str, NormalizationMode] = field(
         default_factory=lambda: {
             "VISUAL": NormalizationMode.IDENTITY,
@@ -86,6 +93,12 @@ class PI05Config(PreTrainedConfig):
     # Finetuning settings
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
+    use_category_specific_action_proj: bool = False
+    max_num_embodiments: int = 32
+    embodiment_id_key: str = "embodiment_id"
+    default_embodiment_id: int = 0
+    default_normalization_id: int = 0
+    pretrained_action_proj_category: int = 0
 
     # Optimizer settings: see openpi `AdamW`
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`
@@ -120,6 +133,26 @@ class PI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if self.max_num_embodiments <= 0:
+            raise ValueError(f"max_num_embodiments must be positive, got {self.max_num_embodiments}")
+
+        if not 0 <= self.pretrained_action_proj_category < self.max_num_embodiments:
+            raise ValueError(
+                "pretrained_action_proj_category must be in "
+                f"[0, {self.max_num_embodiments}), got {self.pretrained_action_proj_category}"
+            )
+
+        if not 0 <= self.default_embodiment_id < self.max_num_embodiments:
+            raise ValueError(
+                "default_embodiment_id must be in "
+                f"[0, {self.max_num_embodiments}), got {self.default_embodiment_id}"
+            )
+
+        if self.default_normalization_id < 0:
+            raise ValueError(
+                f"default_normalization_id must be non-negative, got {self.default_normalization_id}"
+            )
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""
