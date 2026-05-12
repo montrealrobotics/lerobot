@@ -2755,10 +2755,16 @@ hardware = [
     { name = "pyserial" },
 ]
 hilserl = [
+    { name = "av" },
+    { name = "datasets" },
     { name = "grpcio" },
     { name = "gym-hil" },
+    { name = "jsonlines" },
+    { name = "pandas" },
     { name = "placo" },
     { name = "protobuf" },
+    { name = "pyarrow" },
+    { name = "torchcodec", marker = "(platform_machine != 'aarch64' and platform_machine != 'arm64' and platform_machine != 'armv7l' and sys_platform == 'linux') or (platform_machine != 'x86_64' and sys_platform == 'darwin') or (sys_platform != 'darwin' and sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "transformers" },
 ]
 hopejr = [
@@ -2975,6 +2981,7 @@ requires-dist = [
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'aloha'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'core-scripts'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'dataset-viz'" },
+    { name = "lerobot", extras = ["dataset"], marker = "extra == 'hilserl'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'libero'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'metaworld'" },
     { name = "lerobot", extras = ["dataset"], marker = "extra == 'pusht'" },
