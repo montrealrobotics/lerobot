@@ -376,6 +376,8 @@ def make_pre_post_processors(
         processors = make_smolvla_pre_post_processors(
             config=policy_cfg,
             dataset_stats=kwargs.get("dataset_stats"),
+            dataset_stats_by_route=kwargs.get("dataset_stats_by_route"),
+            route_feature_shapes=kwargs.get("route_feature_shapes"),
         )
 
     elif isinstance(policy_cfg, GrootConfig):

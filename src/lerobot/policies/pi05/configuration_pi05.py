@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
@@ -94,6 +95,7 @@ class PI05Config(PreTrainedConfig):
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
     use_category_specific_action_proj: bool = False
+    category_specific_action_proj_type: Literal["linear", "mlp"] = "linear"
     max_num_embodiments: int = 32
     embodiment_id_key: str = "embodiment_id"
     default_embodiment_id: int = 0
@@ -136,6 +138,12 @@ class PI05Config(PreTrainedConfig):
 
         if self.max_num_embodiments <= 0:
             raise ValueError(f"max_num_embodiments must be positive, got {self.max_num_embodiments}")
+
+        if self.category_specific_action_proj_type not in ["linear", "mlp"]:
+            raise ValueError(
+                "category_specific_action_proj_type must be one of ['linear', 'mlp'], "
+                f"got {self.category_specific_action_proj_type}"
+            )
 
         if not 0 <= self.pretrained_action_proj_category < self.max_num_embodiments:
             raise ValueError(

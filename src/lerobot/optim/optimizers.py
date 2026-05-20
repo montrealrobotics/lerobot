@@ -14,10 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import abc
+import re
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import draccus
 import torch
@@ -109,6 +110,102 @@ class AdamWConfig(OptimizerConfig):
         kwargs = asdict(self)
         kwargs.pop("grad_clip_norm")
         return torch.optim.AdamW(params, **kwargs)
+
+
+@dataclass
+class NamedParamGroupConfig:
+    patterns: list[str] = field(default_factory=list)
+    lr: float | None = None
+    weight_decay: float | None = None
+
+
+@OptimizerConfig.register_subclass("named_adamw")
+@dataclass
+class NamedAdamWConfig(OptimizerConfig):
+    """AdamW with regex-selected parameter groups.
+
+    This is useful for adapter fine-tuning where different parts of a wrapped model
+    need different learning rates but should still share one optimizer and scheduler.
+    """
+
+    lr: float = 1e-3
+    betas: tuple[float, float] = (0.9, 0.999)
+    eps: float = 1e-8
+    weight_decay: float = 1e-2
+    grad_clip_norm: float = 10.0
+    param_groups: dict[str, NamedParamGroupConfig] = field(default_factory=dict)
+    fail_on_unmatched: bool = False
+
+    requires_named_parameters: ClassVar[bool] = True
+
+    def build(self, params: OptimizerParams) -> torch.optim.Optimizer:
+        if not isinstance(params, dict) or not all(isinstance(p, torch.nn.Parameter) for p in params.values()):
+            raise TypeError("NamedAdamWConfig requires dict(model.named_parameters()) as optimizer input.")
+
+        compiled_groups = {
+            name: (group, [re.compile(pattern) for pattern in group.patterns])
+            for name, group in self.param_groups.items()
+        }
+        grouped_params: dict[str, list[torch.nn.Parameter]] = {
+            name: [] for name in self.param_groups
+        }
+        default_params: list[torch.nn.Parameter] = []
+        unmatched_names: list[str] = []
+
+        for param_name, param in params.items():
+            if not param.requires_grad:
+                continue
+
+            matched_group = None
+            for group_name, (_, patterns) in compiled_groups.items():
+                if any(pattern.search(param_name) for pattern in patterns):
+                    matched_group = group_name
+                    break
+
+            if matched_group is None:
+                unmatched_names.append(param_name)
+                default_params.append(param)
+            else:
+                grouped_params[matched_group].append(param)
+
+        if unmatched_names and self.fail_on_unmatched:
+            names = ", ".join(unmatched_names[:20])
+            if len(unmatched_names) > 20:
+                names += f", ... ({len(unmatched_names)} total)"
+            raise ValueError(f"Trainable parameters did not match any optimizer group: {names}")
+
+        optimizer_groups: list[dict[str, Any]] = []
+        for group_name, group_params in grouped_params.items():
+            if not group_params:
+                continue
+            group_config = self.param_groups[group_name]
+            optimizer_groups.append(
+                {
+                    "params": group_params,
+                    "lr": self.lr if group_config.lr is None else group_config.lr,
+                    "weight_decay": (
+                        self.weight_decay if group_config.weight_decay is None else group_config.weight_decay
+                    ),
+                    "name": group_name,
+                }
+            )
+
+        if default_params:
+            optimizer_groups.append(
+                {
+                    "params": default_params,
+                    "lr": self.lr,
+                    "weight_decay": self.weight_decay,
+                    "name": "default",
+                }
+            )
+
+        return torch.optim.AdamW(
+            optimizer_groups,
+            lr=self.lr,
+            betas=self.betas,
+            eps=self.eps,
+        )
 
 
 @OptimizerConfig.register_subclass("sgd")

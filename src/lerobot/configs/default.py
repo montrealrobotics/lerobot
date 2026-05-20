@@ -126,3 +126,7 @@ class PeftConfig:
     # the rank used for the adapter. In general a higher rank means more trainable parameters and closer to full
     # fine-tuning.
     r: int = 16
+
+    # Optional per-module rank overrides. This maps module-name patterns to LoRA ranks and is passed through
+    # to PEFT's LoraConfig as rank_pattern.
+    rank_pattern: dict[str, int] | None = None

@@ -266,9 +266,40 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     # On real-world data, no need to create an environment as evaluations are done outside train.py,
     # using the eval.py instead, with gym_dora environment and dora-rs.
     eval_env = None
+    env_processors: dict[str, tuple[Any, Any]] = {}
+    suite_metadata: dict[str, dict[str, Any]] = {}
     if cfg.eval_freq > 0 and cfg.env is not None and is_main_process:
-        logging.info("Creating env")
-        eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+        logging.info("Creating env(s)")
+        eval_env = {}
+        for env_idx, env_cfg in enumerate(cfg.eval_env_configs):
+            envs_dict = make_env(env_cfg, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
+            # Merge into eval_env dict, disambiguating duplicate suite names
+            for suite, tasks in envs_dict.items():
+                key = suite
+                if key in eval_env:
+                    # Two env configs produced the same suite name (e.g. two RoboCasaEnvs).
+                    # Disambiguate by appending the config index.
+                    key = f"{suite}_{env_idx}"
+                    logging.info(f"Disambiguating duplicate suite '{suite}' → '{key}'")
+                eval_env[key] = tasks
+            # Create per-suite env processors
+            pre, post = make_env_pre_post_processors(env_cfg, cfg.policy)
+            for suite in envs_dict:
+                key = suite
+                if key in env_processors:
+                    key = f"{suite}_{env_idx}"
+                env_processors[key] = (pre, post)
+        # Build suite_metadata from config if provided
+        if cfg.suite_metadata is not None:
+            # Map user-provided suite names to potentially disambiguated keys
+            for orig_key, meta in cfg.suite_metadata.items():
+                if orig_key in eval_env:
+                    suite_metadata[orig_key] = meta
+                else:
+                    # Try disambiguated keys
+                    for key in eval_env:
+                        if key.startswith(orig_key + "_"):
+                            suite_metadata[key] = meta
 
     if cfg.is_reward_model_training:
         if is_main_process:
@@ -322,6 +353,16 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         and not cfg.resume
     ):
         logging.info("Building processors from the current policy config instead of the pretrained path.")
+        processor_pretrained_path = None
+    if (
+        getattr(dataset.meta, "stats_by_normalization_id", None)
+        and getattr(active_cfg, "type", None) in {"pi05", "smolvla"}
+        and processor_pretrained_path is not None
+        and not cfg.resume
+    ):
+        logging.info(
+            "Building processors from the current policy config to enable routed per-dataset normalization."
+        )
         processor_pretrained_path = None
 
     processor_kwargs = {}
@@ -398,11 +439,15 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     if is_main_process:
         logging.info(colored("Output dir:", "yellow", attrs=["bold"]) + f" {cfg.output_dir}")
         if cfg.env is not None:
-            logging.info(f"{cfg.env.task=}")
+            for env_cfg in cfg.eval_env_configs:
+                logging.info(f"{env_cfg.task=} ({env_cfg.type})")
             logging.info("Creating environment processors")
-            env_preprocessor, env_postprocessor = make_env_pre_post_processors(
-                env_cfg=cfg.env, policy_cfg=cfg.policy
-            )
+            # env processors are already created per-suite above; if we missed a suite here,
+            # use identity as fallback.
+            if not env_processors:
+                for env_cfg in cfg.eval_env_configs:
+                    pre, post = make_env_pre_post_processors(env_cfg=env_cfg, policy_cfg=cfg.policy)
+                    env_processors[env_cfg.type] = (pre, post)
         logging.info(f"{cfg.steps=} ({format_big_number(cfg.steps)})")
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
@@ -557,21 +602,23 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                     eval_info = eval_policy_all(
                         envs=eval_env,  # dict[suite][task_id] -> vec_env
                         policy=accelerator.unwrap_model(policy),
-                        env_preprocessor=env_preprocessor,
-                        env_postprocessor=env_postprocessor,
+                        env_processors=env_processors,
+                        suite_metadata=suite_metadata,
                         preprocessor=preprocessor,
                         postprocessor=postprocessor,
                         n_episodes=cfg.eval.n_episodes,
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
                         max_episodes_rendered=4,
                         start_seed=cfg.seed,
-                        max_parallel_tasks=cfg.env.max_parallel_tasks,
+                        max_parallel_tasks=(
+                            cfg.eval_env_configs[0].max_parallel_tasks if cfg.eval_env_configs else 1
+                        ),
                     )
                 # overall metrics (suite-agnostic)
                 aggregated = eval_info["overall"]
 
                 # optional: per-suite logging
-                for suite, suite_info in eval_info.items():
+                for suite, suite_info in eval_info.get("per_group", {}).items():
                     logging.info("Suite %s aggregated: %s", suite, suite_info)
 
                 # meters/tracker
@@ -592,9 +639,24 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                 eval_tracker.avg_sum_reward = aggregated.pop("avg_sum_reward")
                 eval_tracker.pc_success = aggregated.pop("pc_success")
                 if wandb_logger:
-                    wandb_log_dict = {**eval_tracker.to_dict(), **eval_info}
+                    wandb_log_dict = {**eval_tracker.to_dict()}
+                    # Log per-suite metrics
+                    for suite, suite_info in eval_info.get("per_group", {}).items():
+                        for k, v in suite_info.items():
+                            if isinstance(v, (int, float, str)) and k != "video_paths":
+                                wandb_log_dict[f"{suite}/{k}"] = v
+                    # Log remaining overall metrics not in tracker
+                    for k, v in eval_info.get("overall", {}).items():
+                        if isinstance(v, (int, float, str)) and k not in (
+                            "eval_s",
+                            "avg_sum_reward",
+                            "pc_success",
+                        ):
+                            wandb_log_dict[f"overall/{k}"] = v
                     wandb_logger.log_dict(wandb_log_dict, step, mode="eval")
-                    wandb_logger.log_video(eval_info["overall"]["video_paths"][0:3], step, mode="eval")
+                    video_paths = eval_info.get("overall", {}).get("video_paths", [])
+                    if video_paths:
+                        wandb_logger.log_video(video_paths[0:3], step, mode="eval")
 
             accelerator.wait_for_everyone()
 

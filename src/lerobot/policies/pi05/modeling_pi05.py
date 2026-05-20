@@ -87,6 +87,49 @@ class CategorySpecificLinear(nn.Module):
         return torch.bmm(x, selected_w) + selected_b.unsqueeze(1)
 
 
+class CategorySpecificMLP(nn.Module):
+    """A two-layer per-category MLP matching GR00T's action head projector."""
+
+    def __init__(self, num_categories: int, input_dim: int, hidden_dim: int, output_dim: int):
+        super().__init__()
+        self.num_categories = num_categories
+        self.in_features = input_dim
+        self.out_features = output_dim
+        self.layer1 = CategorySpecificLinear(num_categories, input_dim, hidden_dim)
+        self.layer2 = CategorySpecificLinear(num_categories, hidden_dim, output_dim)
+
+    def forward(self, x: Tensor, cat_ids: Tensor) -> Tensor:
+        hidden = F.relu(self.layer1(x, cat_ids))
+        return self.layer2(hidden, cat_ids)
+
+
+class LinearFallbackCategorySpecificMLP(nn.Module):
+    """Use the pretrained dense layer for one category, category-specific MLPs for the rest."""
+
+    def __init__(
+        self,
+        num_categories: int,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        pretrained_category: int,
+    ):
+        super().__init__()
+        self.num_categories = num_categories
+        self.in_features = input_dim
+        self.out_features = output_dim
+        self.pretrained_category = pretrained_category
+        self.linear = nn.Linear(input_dim, output_dim)
+        self.mlp = CategorySpecificMLP(num_categories, input_dim, hidden_dim, output_dim)
+
+    def forward(self, x: Tensor, cat_ids: Tensor) -> Tensor:
+        decoded = self.mlp(x, cat_ids)
+        pretrained_mask = cat_ids == self.pretrained_category
+        if pretrained_mask.any():
+            decoded[pretrained_mask] = self.linear(x[pretrained_mask])
+        return decoded
+
+
 def get_safe_dtype(target_dtype, device_type):
     """Get a safe dtype for the given device type."""
     if device_type == "mps" and target_dtype == torch.float64:
@@ -597,12 +640,28 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         )
 
         if config.use_category_specific_action_proj:
-            self.action_in_proj = CategorySpecificLinear(
-                config.max_num_embodiments, config.max_action_dim, action_expert_config.width
-            )
-            self.action_out_proj = CategorySpecificLinear(
-                config.max_num_embodiments, action_expert_config.width, config.max_action_dim
-            )
+            if config.category_specific_action_proj_type == "mlp":
+                self.action_in_proj = LinearFallbackCategorySpecificMLP(
+                    config.max_num_embodiments,
+                    config.max_action_dim,
+                    action_expert_config.width,
+                    action_expert_config.width,
+                    config.pretrained_action_proj_category,
+                )
+                self.action_out_proj = LinearFallbackCategorySpecificMLP(
+                    config.max_num_embodiments,
+                    action_expert_config.width,
+                    action_expert_config.width,
+                    config.max_action_dim,
+                    config.pretrained_action_proj_category,
+                )
+            else:
+                self.action_in_proj = CategorySpecificLinear(
+                    config.max_num_embodiments, config.max_action_dim, action_expert_config.width
+                )
+                self.action_out_proj = CategorySpecificLinear(
+                    config.max_num_embodiments, action_expert_config.width, config.max_action_dim
+                )
         else:
             self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)
             self.action_out_proj = nn.Linear(action_expert_config.width, config.max_action_dim)
@@ -1088,6 +1147,8 @@ class PI05Policy(PreTrainedPolicy):
             if remap_count > 0:
                 print(f"Remapped {remap_count} state dict keys")
 
+            remapped_state_dict = model._fill_initialized_action_mlp_keys(remapped_state_dict)
+
             # Load the remapped state dict into the model
             missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=strict)
 
@@ -1165,7 +1226,14 @@ class PI05Policy(PreTrainedPolicy):
                 continue
 
             if model_config.use_category_specific_action_proj:
-                if new_key.endswith("action_in_proj.weight") or new_key.endswith("action_out_proj.weight"):
+                if model_config.category_specific_action_proj_type == "mlp":
+                    if new_key.endswith("action_in_proj.weight") or new_key.endswith(
+                        "action_out_proj.weight"
+                    ):
+                        new_key = new_key.removesuffix("weight") + "linear.weight"
+                    elif new_key.endswith("action_in_proj.bias") or new_key.endswith("action_out_proj.bias"):
+                        new_key = new_key.removesuffix("bias") + "linear.bias"
+                elif new_key.endswith("action_in_proj.weight") or new_key.endswith("action_out_proj.weight"):
                     new_key = new_key.removesuffix("weight") + "W"
                     value = self._expand_dense_action_proj_weight(new_key, value)
                 elif new_key.endswith("action_in_proj.bias") or new_key.endswith("action_out_proj.bias"):
@@ -1188,6 +1256,21 @@ class PI05Policy(PreTrainedPolicy):
             fixed_state_dict[new_key] = value
 
         return fixed_state_dict
+
+    def _fill_initialized_action_mlp_keys(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        if not (
+            self.config.use_category_specific_action_proj
+            and self.config.category_specific_action_proj_type == "mlp"
+        ):
+            return state_dict
+
+        full_state_dict = self.state_dict()
+        for key, value in full_state_dict.items():
+            if (
+                key.startswith("model.action_in_proj.mlp.") or key.startswith("model.action_out_proj.mlp.")
+            ) and key not in state_dict:
+                state_dict[key] = value
+        return state_dict
 
     def _expand_dense_action_proj_weight(self, key: str, weight: Tensor) -> Tensor:
         module = self.model.action_in_proj if "action_in_proj" in key else self.model.action_out_proj
