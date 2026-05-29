@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import dataclasses
+import json
 import logging
 import time
 from contextlib import nullcontext
@@ -488,12 +489,25 @@ def train(cfg: TrainPipelineConfig, accelerator: Accelerator | None = None):
                         postprocessor=postprocessor,
                         n_episodes=cfg.eval.n_episodes,
                         videos_dir=cfg.output_dir / "eval" / f"videos_step_{step_id}",
-                        max_episodes_rendered=4,
+                        max_episodes_rendered=cfg.eval.n_videos,
                         start_seed=cfg.seed,
                         max_parallel_tasks=cfg.env.max_parallel_tasks,
                     )
                 # overall metrics (suite-agnostic)
                 aggregated = eval_info["overall"]
+
+                # Save scores to disk so they persist without WandB.
+                scores_path = cfg.output_dir / "eval" / "scores.jsonl"
+                scores_path.parent.mkdir(parents=True, exist_ok=True)
+                score_entry = {
+                    "step": step,
+                    "pc_success": float(aggregated.get("pc_success", 0)),
+                    "avg_sum_reward": float(aggregated.get("avg_sum_reward", 0)),
+                    "eval_s": float(aggregated.get("eval_s", 0)),
+                    "videos_dir": str(cfg.output_dir / "eval" / f"videos_step_{step_id}"),
+                }
+                with open(scores_path, "a") as f:
+                    f.write(json.dumps(score_entry) + "\n")
 
                 # optional: per-suite logging
                 for suite, suite_info in eval_info.items():

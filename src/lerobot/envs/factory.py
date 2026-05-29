@@ -181,6 +181,35 @@ def make_env(
             control_mode=cfg.control_mode,
             episode_length=cfg.episode_length,
         )
+    elif "stacking" in cfg.type:
+        if cfg.type == "stacking2":
+            from lerobot.envs.stacking import create_two_cube_stacking_envs
+
+            return create_two_cube_stacking_envs(
+                task=cfg.task or "two_cube_stacking",
+                n_envs=n_envs,
+                gym_kwargs=cfg.gym_kwargs,
+                env_cls=env_cls,
+            )
+        elif cfg.type == "stacking4":
+            from lerobot.envs.stacking import create_four_cube_stacking_envs
+
+            return create_four_cube_stacking_envs(
+                task=cfg.task or "four_cube_stacking",
+                n_envs=n_envs,
+                gym_kwargs=cfg.gym_kwargs,
+                env_cls=env_cls,
+            )
+        else:
+            from lerobot.envs.stacking import create_stacking_envs
+
+            return create_stacking_envs(
+                task=cfg.task or "cube_stacking",
+                n_envs=n_envs,
+                gym_kwargs=cfg.gym_kwargs,
+                env_cls=env_cls,
+            )
+
     elif "metaworld" in cfg.type:
         from lerobot.envs.metaworld import create_metaworld_envs
 

@@ -99,6 +99,9 @@ class ACTConfig(PreTrainedConfig):
     vision_backbone: str = "resnet18"
     pretrained_backbone_weights: str | None = "ResNet18_Weights.IMAGENET1K_V1"
     replace_final_stride_with_dilation: int = False
+    # If set, images are resized to (H, W) inside the model before the backbone.
+    # Useful for training at lower resolution without modifying the dataset.
+    resize_shape: tuple[int, int] | None = None
     # Transformer layers.
     pre_norm: bool = False
     dim_model: int = 512

@@ -355,6 +355,8 @@ class MetaworldEnv(EnvConfig):
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
     multitask_eval: bool = True
+    observation_width: int = 96
+    observation_height: int = 96
     features: dict[str, PolicyFeature] = field(
         default_factory=lambda: {
             "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
@@ -371,11 +373,15 @@ class MetaworldEnv(EnvConfig):
 
     def __post_init__(self):
         if self.obs_type == "pixels":
-            self.features["top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 480, 3))
+            self.features["top"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
 
         elif self.obs_type == "pixels_agent_pos":
             self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
-            self.features["pixels/top"] = PolicyFeature(type=FeatureType.VISUAL, shape=(480, 480, 3))
+            self.features["pixels/top"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
 
         else:
             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
@@ -385,6 +391,165 @@ class MetaworldEnv(EnvConfig):
         return {
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
+        }
+
+
+@EnvConfig.register_subclass("stacking")
+@dataclass
+class StackingEnv(EnvConfig):
+    task: str = "cube_stacking"
+    fps: int = 80
+    episode_length: int = 600
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    observation_width: int = 96
+    observation_height: int = 96
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels": OBS_IMAGE,
+            "pixels/top": OBS_IMAGE,
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            # 4-dim proprioceptive state: [mocap_xyz(3), gripper(1)].
+            # Cube positions are perceived via image only — matches TwoCubeStackingEnv
+            # so 2-cube checkpoints finetune to 3-cube with zero architecture changes.
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
+        }
+
+
+@EnvConfig.register_subclass("stacking2")
+@dataclass
+class Stacking2Env(EnvConfig):
+    """2-cube stacking: place green (B) on red (A).
+
+    State is 10-dim [mocap(3), gripper(1), cube_A(3), cube_B(3)] — identical
+    layout to the 3-cube finetune dataset so warm-start requires no arch change.
+    """
+
+    task: str = "two_cube_stacking"
+    fps: int = 80
+    episode_length: int = 350
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    observation_width: int = 96
+    observation_height: int = 96
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels": OBS_IMAGE,
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            # 4-dim proprioceptive state: [mocap_xyz(3), gripper(1)].
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
+        }
+
+
+@EnvConfig.register_subclass("stacking4")
+@dataclass
+class Stacking4Env(EnvConfig):
+    """4-cube stacking: stack green(B) on red(A), blue(C) on B, yellow(D) on C."""
+
+    task: str = "four_cube_stacking"
+    fps: int = 80
+    episode_length: int = 900
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    observation_width: int = 224
+    observation_height: int = 224
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {
+            "action": PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            "action": ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels": OBS_IMAGE,
+        }
+    )
+
+    def __post_init__(self):
+        if self.obs_type == "pixels":
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(4,))
+            self.features["pixels"] = PolicyFeature(
+                type=FeatureType.VISUAL,
+                shape=(self.observation_height, self.observation_width, 3),
+            )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
         }
 
 

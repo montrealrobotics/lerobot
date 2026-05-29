@@ -19,6 +19,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+import cv2
 import gymnasium as gym
 import metaworld
 import metaworld.policies as policies
@@ -181,6 +182,13 @@ class MetaworldEnv(gym.Env):
                 "Expected `image` to be rendered before constructing pixel-based observations. "
                 "This likely means `env.render()` returned None or the environment was not provided."
             )
+
+            # Resize to requested resolution if different from the rendered size
+            h, w = image.shape[:2]
+            if h != self.observation_height or w != self.observation_width:
+                image = cv2.resize(
+                    image, (self.observation_width, self.observation_height), interpolation=cv2.INTER_AREA
+                )
 
             if self.obs_type == "pixels":
                 obs = {"pixels": image.copy()}

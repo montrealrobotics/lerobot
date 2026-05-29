@@ -321,6 +321,11 @@ class ACT(nn.Module):
 
         # Backbone for image feature extraction.
         if self.config.image_features:
+            self.resize = (
+                torchvision.transforms.Resize(config.resize_shape)
+                if config.resize_shape is not None
+                else None
+            )
             backbone_model = getattr(torchvision.models, config.vision_backbone)(
                 replace_stride_with_dilation=[False, False, config.replace_final_stride_with_dilation],
                 weights=config.pretrained_backbone_weights,
@@ -470,6 +475,8 @@ class ACT(nn.Module):
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
             for img in batch[OBS_IMAGES]:
+                if self.resize is not None:
+                    img = self.resize(img)
                 cam_features = self.backbone(img)["feature_map"]
                 cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
                 cam_features = self.encoder_img_feat_input_proj(cam_features)
