@@ -74,7 +74,9 @@ def cfg_to_group(
             dataset_tag = f"dataset:{repo_ids}"
         lst.append(dataset_tag)
     if cfg.env is not None:
-        lst.append(f"env:{cfg.env.type}")
+        env_configs = cfg.eval_env_configs
+        env_tag = "+".join(ec.type for ec in env_configs)
+        lst.append(f"env:{env_tag}")
     if truncate_tags:
         lst = [_maybe_truncate(tag) for tag in lst]
     return lst if return_list else "-".join(lst)
@@ -105,7 +107,11 @@ class WandBLogger:
         self.cfg = cfg.wandb
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
-        self.env_fps = cfg.env.fps if cfg.env else None
+        if cfg.env is not None:
+            env_configs = cfg.eval_env_configs
+            self.env_fps = env_configs[0].fps
+        else:
+            self.env_fps = None
         self._group = cfg_to_group(cfg)
 
         # Set up WandB.

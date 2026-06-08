@@ -52,9 +52,10 @@ policy = SmolVLAPolicy.from_pretrained("lerobot/smolvla_base")
 
 """
 
+import logging
 import math
 from collections import deque
-from typing import TypedDict, Unpack
+from typing import Any, TypedDict, Unpack
 
 import torch
 import torch.nn.functional as F  # noqa: N812
@@ -77,6 +78,71 @@ class ActionSelectKwargs(TypedDict, total=False):
     inference_delay: int | None
     prev_chunk_left_over: Tensor | None
     execution_horizon: int | None
+    embodiment_ids: Tensor | None
+
+
+class CategorySpecificLinear(nn.Module):
+    """A per-category linear layer with the same batch semantics as GR00T."""
+
+    def __init__(self, num_categories: int, input_dim: int, output_dim: int):
+        super().__init__()
+        self.num_categories = num_categories
+        self.in_features = input_dim
+        self.out_features = output_dim
+        self.W = nn.Parameter(0.02 * torch.randn(num_categories, input_dim, output_dim))
+        self.b = nn.Parameter(torch.zeros(num_categories, output_dim))
+
+    def forward(self, x: Tensor, cat_ids: Tensor) -> Tensor:
+        if cat_ids.ndim != 1:
+            cat_ids = cat_ids.reshape(-1)
+        if x.shape[0] != cat_ids.shape[0]:
+            raise ValueError(f"Expected one category id per batch item, got {x.shape[0]=}, {cat_ids.shape=}")
+        selected_w = self.W[cat_ids]
+        selected_b = self.b[cat_ids]
+        return torch.bmm(x, selected_w) + selected_b.unsqueeze(1)
+
+
+class CategorySpecificMLP(nn.Module):
+    """A two-layer per-category MLP matching GR00T's action head projector."""
+
+    def __init__(self, num_categories: int, input_dim: int, hidden_dim: int, output_dim: int):
+        super().__init__()
+        self.num_categories = num_categories
+        self.in_features = input_dim
+        self.out_features = output_dim
+        self.layer1 = CategorySpecificLinear(num_categories, input_dim, hidden_dim)
+        self.layer2 = CategorySpecificLinear(num_categories, hidden_dim, output_dim)
+
+    def forward(self, x: Tensor, cat_ids: Tensor) -> Tensor:
+        hidden = F.relu(self.layer1(x, cat_ids))
+        return self.layer2(hidden, cat_ids)
+
+
+class LinearFallbackCategorySpecificMLP(nn.Module):
+    """Use the pretrained dense layer for one category, category-specific MLPs for the rest."""
+
+    def __init__(
+        self,
+        num_categories: int,
+        input_dim: int,
+        hidden_dim: int,
+        output_dim: int,
+        pretrained_category: int,
+    ):
+        super().__init__()
+        self.num_categories = num_categories
+        self.in_features = input_dim
+        self.out_features = output_dim
+        self.pretrained_category = pretrained_category
+        self.linear = nn.Linear(input_dim, output_dim)
+        self.mlp = CategorySpecificMLP(num_categories, input_dim, hidden_dim, output_dim)
+
+    def forward(self, x: Tensor, cat_ids: Tensor) -> Tensor:
+        decoded = self.mlp(x, cat_ids)
+        pretrained_mask = cat_ids == self.pretrained_category
+        if pretrained_mask.any():
+            decoded[pretrained_mask] = self.linear(x[pretrained_mask])
+        return decoded
 
 
 def create_sinusoidal_pos_embedding(
@@ -289,6 +355,7 @@ class SmolVLAPolicy(PreTrainedPolicy):
         state = self.prepare_state(batch)
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
+        kwargs.setdefault("embodiment_ids", self.prepare_embodiment_ids(batch))
 
         actions = self.model.sample_actions(
             images, img_masks, lang_tokens, lang_masks, state, noise=noise, **kwargs
@@ -377,9 +444,12 @@ class SmolVLAPolicy(PreTrainedPolicy):
         lang_tokens = batch[f"{OBS_LANGUAGE_TOKENS}"]
         lang_masks = batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
         actions = self.prepare_action(batch)
+        embodiment_ids = self.prepare_embodiment_ids(batch)
         actions_is_pad = batch.get("action_is_pad")
         loss_dict = {}
-        losses = self.model.forward(images, img_masks, lang_tokens, lang_masks, state, actions, noise, time)
+        losses = self.model.forward(
+            images, img_masks, lang_tokens, lang_masks, state, actions, noise, time, embodiment_ids
+        )
         original_action_dim = self.config.action_feature.shape[0]
         losses = losses[:, :, :original_action_dim]
         loss_dict["losses_after_forward"] = losses.clone().mean().item()
@@ -492,16 +562,130 @@ class SmolVLAPolicy(PreTrainedPolicy):
         actions = pad_vector(batch[ACTION], self.config.max_action_dim)
         return actions
 
-    def _get_default_peft_targets(self) -> dict[str, any]:
+    def prepare_embodiment_ids(self, batch: dict[str, Tensor]) -> Tensor | None:
+        if not self.config.use_category_specific_action_proj:
+            return None
+
+        key = self.config.embodiment_id_key
+        if key in batch and batch[key] is not None:
+            return batch[key]
+
+        if key == "embodiment_id" and "dataset_index" in batch and batch["dataset_index"] is not None:
+            return batch["dataset_index"]
+
+        device = next(self.parameters()).device
+        batch_size = self._infer_batch_size(batch)
+        return self.model._default_embodiment_ids(batch_size, device)
+
+    def _infer_batch_size(self, batch: dict[str, Tensor]) -> int:
+        for key in (OBS_LANGUAGE_TOKENS, ACTION, OBS_STATE):
+            value = batch.get(key)
+            if isinstance(value, Tensor):
+                return value.shape[0]
+
+        for value in batch.values():
+            if isinstance(value, Tensor):
+                return value.shape[0]
+
+        raise ValueError("Could not infer batch size from batch while preparing embodiment ids.")
+
+    def _get_default_peft_targets(self) -> dict[str, Any]:
         """Return default PEFT target modules for SmolVLA fine-tuning."""
         common_projections = (
             "state_proj|action_in_proj|action_out_proj|action_time_mlp_in|action_time_mlp_out"
         )
+        modules_to_save = []
+        if self.config.use_category_specific_action_proj:
+            common_projections = "state_proj|action_time_mlp_in|action_time_mlp_out"
+            modules_to_save = ["model.action_in_proj", "model.action_out_proj"]
+
         target_modules = rf"(model\.vlm_with_expert\.lm_expert\..*\.(q|v)_proj|model\.({common_projections}))"
         return {
             "target_modules": target_modules,
-            "modules_to_save": [],
+            "modules_to_save": modules_to_save,
         }
+
+    def load_state_dict(self, state_dict: dict[str, Tensor], strict: bool = True, assign: bool = False):
+        state_dict = self._fix_category_specific_action_proj_state_dict(state_dict)
+        # Filter out size-mismatched keys (e.g. state_proj when max_state_dim differs from pretrained).
+        # This lets us load a checkpoint where linear layer dimensions don't match
+        # while keeping strict=True for all other keys.
+        filtered = dict(state_dict)
+        for key, value in list(filtered.items()):
+            if key in self.state_dict():
+                target_shape = self.state_dict()[key].shape
+                if value.shape != target_shape:
+                    logging.warning(
+                        f"Skipping '{key}' from checkpoint: shape {tuple(value.shape)} "
+                        f"!= current model shape {tuple(target_shape)}"
+                    )
+                    del filtered[key]
+        return super().load_state_dict(filtered, strict=strict, assign=assign)
+
+    def _fix_category_specific_action_proj_state_dict(
+        self, state_dict: dict[str, Tensor]
+    ) -> dict[str, Tensor]:
+        if not self.config.use_category_specific_action_proj:
+            return state_dict
+
+        fixed_state_dict = dict(state_dict)
+        for prefix in ("model.action_in_proj", "model.action_out_proj"):
+            weight_key = f"{prefix}.weight"
+            bias_key = f"{prefix}.bias"
+
+            if self.config.category_specific_action_proj_type == "mlp":
+                if weight_key in fixed_state_dict:
+                    fixed_state_dict[f"{prefix}.linear.weight"] = fixed_state_dict.pop(weight_key)
+                if bias_key in fixed_state_dict:
+                    fixed_state_dict[f"{prefix}.linear.bias"] = fixed_state_dict.pop(bias_key)
+                continue
+
+            if weight_key in fixed_state_dict:
+                fixed_state_dict[f"{prefix}.W"] = self._expand_dense_action_proj_weight(
+                    prefix, fixed_state_dict.pop(weight_key)
+                )
+            if bias_key in fixed_state_dict:
+                fixed_state_dict[f"{prefix}.b"] = self._expand_dense_action_proj_bias(
+                    prefix, fixed_state_dict.pop(bias_key)
+                )
+
+        if self.config.category_specific_action_proj_type == "mlp":
+            fixed_state_dict = self._fill_initialized_action_mlp_keys(fixed_state_dict)
+
+        return fixed_state_dict
+
+    def _fill_initialized_action_mlp_keys(self, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:
+        full_state_dict = self.state_dict()
+        for key, value in full_state_dict.items():
+            if (
+                key.startswith("model.action_in_proj.mlp.") or key.startswith("model.action_out_proj.mlp.")
+            ) and key not in state_dict:
+                state_dict[key] = value
+        return state_dict
+
+    def _expand_dense_action_proj_weight(self, prefix: str, weight: Tensor) -> Tensor:
+        module = self.model.action_in_proj if "action_in_proj" in prefix else self.model.action_out_proj
+        expanded = module.W.detach().clone()
+        slot = self.config.pretrained_action_proj_category
+        expected_shape = (module.out_features, module.in_features)
+        if tuple(weight.shape) != expected_shape:
+            raise ValueError(
+                f"Cannot expand {prefix}.weight: expected dense weight {expected_shape}, got {weight.shape}"
+            )
+        expanded[slot] = weight.T
+        return expanded
+
+    def _expand_dense_action_proj_bias(self, prefix: str, bias: Tensor) -> Tensor:
+        module = self.model.action_in_proj if "action_in_proj" in prefix else self.model.action_out_proj
+        expanded = module.b.detach().clone()
+        slot = self.config.pretrained_action_proj_category
+        expected_shape = (module.out_features,)
+        if tuple(bias.shape) != expected_shape:
+            raise ValueError(
+                f"Cannot expand {prefix}.bias: expected dense bias {expected_shape}, got {bias.shape}"
+            )
+        expanded[slot] = bias
+        return expanded
 
     def _validate_peft_config(self, peft_config) -> None:
         """Validate PEFT configuration for SmolVLA."""
@@ -583,8 +767,40 @@ class VLAFlowMatching(nn.Module):
         self.state_proj = nn.Linear(
             self.config.max_state_dim, self.vlm_with_expert.config.text_config.hidden_size
         )
-        self.action_in_proj = nn.Linear(self.config.max_action_dim, self.vlm_with_expert.expert_hidden_size)
-        self.action_out_proj = nn.Linear(self.vlm_with_expert.expert_hidden_size, self.config.max_action_dim)
+        if config.use_category_specific_action_proj:
+            if config.category_specific_action_proj_type == "mlp":
+                self.action_in_proj = LinearFallbackCategorySpecificMLP(
+                    config.max_num_embodiments,
+                    config.max_action_dim,
+                    self.vlm_with_expert.expert_hidden_size,
+                    self.vlm_with_expert.expert_hidden_size,
+                    config.pretrained_action_proj_category,
+                )
+                self.action_out_proj = LinearFallbackCategorySpecificMLP(
+                    config.max_num_embodiments,
+                    self.vlm_with_expert.expert_hidden_size,
+                    self.vlm_with_expert.expert_hidden_size,
+                    config.max_action_dim,
+                    config.pretrained_action_proj_category,
+                )
+            else:
+                self.action_in_proj = CategorySpecificLinear(
+                    config.max_num_embodiments,
+                    config.max_action_dim,
+                    self.vlm_with_expert.expert_hidden_size,
+                )
+                self.action_out_proj = CategorySpecificLinear(
+                    config.max_num_embodiments,
+                    self.vlm_with_expert.expert_hidden_size,
+                    config.max_action_dim,
+                )
+        else:
+            self.action_in_proj = nn.Linear(
+                self.config.max_action_dim, self.vlm_with_expert.expert_hidden_size
+            )
+            self.action_out_proj = nn.Linear(
+                self.vlm_with_expert.expert_hidden_size, self.config.max_action_dim
+            )
 
         self.action_time_mlp_in = nn.Linear(
             self.vlm_with_expert.expert_hidden_size * 2, self.vlm_with_expert.expert_hidden_size
@@ -617,6 +833,31 @@ class VLAFlowMatching(nn.Module):
     def set_requires_grad(self):
         for params in self.state_proj.parameters():
             params.requires_grad = self.config.train_state_proj
+
+    def _default_embodiment_ids(self, batch_size: int, device: torch.device) -> Tensor:
+        return torch.full(
+            (batch_size,),
+            self.config.default_embodiment_id,
+            dtype=torch.long,
+            device=device,
+        )
+
+    def _validate_embodiment_ids(
+        self, embodiment_ids: Tensor | None, batch_size: int, device: torch.device
+    ) -> Tensor | None:
+        if not self.config.use_category_specific_action_proj:
+            return None
+        if embodiment_ids is None:
+            return self._default_embodiment_ids(batch_size, device)
+        embodiment_ids = embodiment_ids.to(device=device, dtype=torch.long).reshape(-1)
+        if embodiment_ids.shape[0] != batch_size:
+            raise ValueError(f"Expected {batch_size} embodiment ids, got shape {tuple(embodiment_ids.shape)}")
+        if torch.any((embodiment_ids < 0) | (embodiment_ids >= self.config.max_num_embodiments)):
+            raise ValueError(
+                "Embodiment ids must be in "
+                f"[0, {self.config.max_num_embodiments}), got {embodiment_ids.detach().cpu().tolist()}"
+            )
+        return embodiment_ids
 
     def sample_noise(self, shape, device):
         noise = torch.normal(
@@ -728,14 +969,20 @@ class VLAFlowMatching(nn.Module):
 
         return embs, pad_masks, att_masks
 
-    def embed_suffix(self, noisy_actions, timestep):
+    def embed_suffix(self, noisy_actions, timestep, embodiment_ids=None):
         """Embed state, noisy_actions, timestep to prepare for Expert Gemma processing."""
         embs = []
         pad_masks = []
         att_masks = []
+        embodiment_ids = self._validate_embodiment_ids(
+            embodiment_ids, noisy_actions.shape[0], noisy_actions.device
+        )
 
         # Fuse timestep + action information using an MLP
-        action_emb = self.action_in_proj(noisy_actions)
+        if embodiment_ids is None:
+            action_emb = self.action_in_proj(noisy_actions)
+        else:
+            action_emb = self.action_in_proj(noisy_actions, embodiment_ids)
         device = action_emb.device
         bsize = action_emb.shape[0]
         dtype = action_emb.dtype
@@ -772,7 +1019,16 @@ class VLAFlowMatching(nn.Module):
         return embs, pad_masks, att_masks
 
     def forward(
-        self, images, img_masks, lang_tokens, lang_masks, state, actions, noise=None, time=None
+        self,
+        images,
+        img_masks,
+        lang_tokens,
+        lang_masks,
+        state,
+        actions,
+        noise=None,
+        time=None,
+        embodiment_ids=None,
     ) -> Tensor:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         if noise is None:
@@ -787,7 +1043,7 @@ class VLAFlowMatching(nn.Module):
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
             images, img_masks, lang_tokens, lang_masks, state=state
         )
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, time, embodiment_ids)
 
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
@@ -805,7 +1061,11 @@ class VLAFlowMatching(nn.Module):
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         # Original openpi code, upcast attention output
         suffix_out = suffix_out.to(dtype=torch.float32)
-        v_t = self.action_out_proj(suffix_out)
+        embodiment_ids = self._validate_embodiment_ids(embodiment_ids, suffix_out.shape[0], suffix_out.device)
+        if embodiment_ids is None:
+            v_t = self.action_out_proj(suffix_out)
+        else:
+            v_t = self.action_out_proj(suffix_out, embodiment_ids)
         losses = F.mse_loss(u_t, v_t, reduction="none")
         return losses
 
@@ -855,6 +1115,7 @@ class VLAFlowMatching(nn.Module):
                     prefix_pad_masks=prefix_pad_masks,
                     past_key_values=past_key_values,
                     timestep=current_timestep,
+                    embodiment_ids=kwargs.get("embodiment_ids"),
                 )
 
             if self._rtc_enabled():
@@ -886,9 +1147,10 @@ class VLAFlowMatching(nn.Module):
         past_key_values,
         x_t,
         timestep,
+        embodiment_ids=None,
     ):
         """Apply one denoising step of the noise `x_t` at a given timestep."""
-        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, timestep)
+        suffix_embs, suffix_pad_masks, suffix_att_masks = self.embed_suffix(x_t, timestep, embodiment_ids)
 
         suffix_len = suffix_pad_masks.shape[1]
         batch_size = prefix_pad_masks.shape[0]
@@ -912,5 +1174,7 @@ class VLAFlowMatching(nn.Module):
         suffix_out = outputs_embeds[1]
         suffix_out = suffix_out[:, -self.config.chunk_size :]
         suffix_out = suffix_out.to(dtype=torch.float32)
-        v_t = self.action_out_proj(suffix_out)
-        return v_t
+        embodiment_ids = self._validate_embodiment_ids(embodiment_ids, suffix_out.shape[0], suffix_out.device)
+        if embodiment_ids is None:
+            return self.action_out_proj(suffix_out)
+        return self.action_out_proj(suffix_out, embodiment_ids)

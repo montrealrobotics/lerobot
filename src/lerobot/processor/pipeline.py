@@ -282,16 +282,24 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
     before_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
     after_step_hooks: list[Callable[[int, EnvTransition], None]] = field(default_factory=list, repr=False)
 
-    def __call__(self, data: TInput) -> TOutput:
+    def __call__(self, data: TInput, complementary_data: dict[str, Any] | None = None) -> TOutput:
         """Processes input data through the full pipeline.
 
         Args:
             data: The input data to process.
+            complementary_data: Optional dict of complementary data (e.g. ``{"normalization_id": 0}``)
+                to merge into the transition. This is used by routed processor steps that need
+                routing context (like ``RoutedUnnormalizerProcessorStep``) which isn't available
+                from the input data alone (e.g. when the input is just an action tensor).
 
         Returns:
             The processed data in the specified output format.
         """
         transition = self.to_transition(data)
+        if complementary_data:
+            existing = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
+            existing.update(complementary_data)
+            transition[TransitionKey.COMPLEMENTARY_DATA] = existing
         transformed_transition = self._forward(transition)
         return self.to_output(transformed_transition)
 

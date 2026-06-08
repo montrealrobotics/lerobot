@@ -335,6 +335,14 @@ class _NormalizationMixin:
                 )
 
             mean, std = stats["mean"], stats["std"]
+            # Handle dimension mismatch: pad the tensor to match stats dimension.
+            # This can happen when an env observation has fewer dimensions than the
+            # dataset stats (e.g. single-robot env vs dual-robot dataset). The extra
+            # dimensions will be zero-centered by the (0 - mean) / std computation,
+            # and the model's prepare_state() pads further to max_state_dim.
+            if tensor.shape[-1] < mean.shape[-1]:
+                pad_width = mean.shape[-1] - tensor.shape[-1]
+                tensor = torch.nn.functional.pad(tensor, (0, pad_width))
             # Avoid division by zero by adding a small epsilon.
             denom = std + self.eps
             if inverse:
@@ -618,7 +626,12 @@ class _RoutedNormalizationMixin(ProcessorStep):
         self, action: Tensor, route_ids: Tensor | None, inverse: bool, crop_to_route_shape: bool
     ) -> Tensor:
         return self._apply_routed_transform(
-            action, ACTION, FeatureType.ACTION, route_ids, inverse=inverse, crop_to_route_shape=crop_to_route_shape
+            action,
+            ACTION,
+            FeatureType.ACTION,
+            route_ids,
+            inverse=inverse,
+            crop_to_route_shape=crop_to_route_shape,
         )
 
     def _apply_routed_transform(
@@ -632,7 +645,11 @@ class _RoutedNormalizationMixin(ProcessorStep):
         crop_to_route_shape: bool,
     ) -> Tensor:
         if route_ids is None or route_ids.numel() <= 1:
-            route = int(route_ids.item()) if route_ids is not None and route_ids.numel() == 1 else self.default_route
+            route = (
+                int(route_ids.item())
+                if route_ids is not None and route_ids.numel() == 1
+                else self.default_route
+            )
             return self._apply_transform_for_route(
                 tensor,
                 key,
@@ -656,7 +673,14 @@ class _RoutedNormalizationMixin(ProcessorStep):
                 crop_to_route_shape=False,
             )
             if output is None:
-                output = torch.empty_like(tensor)
+                # Use the processed shape for feature dims — the input tensor may have
+                # a different feature dim than the routed stats (e.g. a gripper state
+                # [B, 8] being padded to [B, 23] by _align_tensor_to_stats).
+                output = torch.empty(
+                    (tensor.shape[0], *routed_tensor.shape[1:]),
+                    dtype=routed_tensor.dtype,
+                    device=routed_tensor.device,
+                )
             output[mask] = routed_tensor
         if output is None:
             return tensor
@@ -707,7 +731,9 @@ class _RoutedNormalizationMixin(ProcessorStep):
                 torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype),
                 max_val - min_val,
             )
-            transformed = (tensor + 1) / 2 * denom + min_val if inverse else 2 * (tensor - min_val) / denom - 1
+            transformed = (
+                (tensor + 1) / 2 * denom + min_val if inverse else 2 * (tensor - min_val) / denom - 1
+            )
         elif norm_mode == NormalizationMode.QUANTILES:
             q01, q99 = stats.get("q01"), stats.get("q99")
             if q01 is None or q99 is None:
@@ -717,7 +743,9 @@ class _RoutedNormalizationMixin(ProcessorStep):
                 torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype),
                 q99 - q01,
             )
-            transformed = (tensor + 1.0) * denom / 2.0 + q01 if inverse else 2.0 * (tensor - q01) / denom - 1.0
+            transformed = (
+                (tensor + 1.0) * denom / 2.0 + q01 if inverse else 2.0 * (tensor - q01) / denom - 1.0
+            )
         else:
             q10, q90 = stats.get("q10"), stats.get("q90")
             if q10 is None or q90 is None:
@@ -727,7 +755,9 @@ class _RoutedNormalizationMixin(ProcessorStep):
                 torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype),
                 q90 - q10,
             )
-            transformed = (tensor + 1.0) * denom / 2.0 + q10 if inverse else 2.0 * (tensor - q10) / denom - 1.0
+            transformed = (
+                (tensor + 1.0) * denom / 2.0 + q10 if inverse else 2.0 * (tensor - q10) / denom - 1.0
+            )
 
         if inverse and crop_to_route_shape:
             transformed = self._crop_tensor_to_route_shape(transformed, key, route)
@@ -738,7 +768,11 @@ class _RoutedNormalizationMixin(ProcessorStep):
             return tensor
 
         stat_shape = next(
-            (tuple(stat.shape) for stat_name, stat in stats.items() if stat_name != "count" and stat.ndim > 0),
+            (
+                tuple(stat.shape)
+                for stat_name, stat in stats.items()
+                if stat_name != "count" and stat.ndim > 0
+            ),
             None,
         )
         if not stat_shape:

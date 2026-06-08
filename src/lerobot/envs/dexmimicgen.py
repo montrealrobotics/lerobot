@@ -143,11 +143,11 @@ class DexMimicGenEnv(gym.Env):
             "robot0_eye_in_hand": "robot0_eye_in_hand",
         }
 
-        robots = list(robots or ENV_ROBOTS[task_name])
+        self.robots = list(robots or ENV_ROBOTS[task_name])
         env_defaults = {
             "env_name": task_name,
-            "robots": robots,
-            "controller_configs": _load_controller_config(robots),
+            "robots": self.robots,
+            "controller_configs": _load_controller_config(self.robots),
             "has_renderer": render_mode == "human",
             "has_offscreen_renderer": render_mode == "rgb_array",
             "ignore_done": False,
@@ -203,20 +203,29 @@ class DexMimicGenEnv(gym.Env):
 
     def _infer_state_dim(self) -> int:
         if self.state_mode == "joint_gripper":
-            return 7 + len(self.gripper_qpos_indices)
-        if self.state_mode == "eef_gripper":
-            return 7 + len(self.gripper_qpos_indices)
-        raise ValueError(f"Unsupported state_mode '{self.state_mode}'.")
+            # Per-robot: joint_pos(7) + gripper(len(gripper_qpos_indices))
+            per_robot = 7 + len(self.gripper_qpos_indices)
+        else:
+            # Per-robot ("full" mode): eef_pos(3) + eef_quat(4) + joint_pos(7) + hand(6)
+            per_robot = 3 + 4 + 7 + len(self.gripper_qpos_indices)
+        return per_robot * len(self.robots)
 
     def _format_state(self, raw_obs: Mapping[str, np.ndarray]) -> np.ndarray:
-        gripper = np.asarray(raw_obs["robot0_gripper_qpos"])[list(self.gripper_qpos_indices)]
-        if self.state_mode == "joint_gripper":
-            state = np.concatenate([raw_obs["robot0_joint_pos"], gripper], axis=-1)
-        elif self.state_mode == "eef_gripper":
-            state = np.concatenate([raw_obs["robot0_eef_pos"], raw_obs["robot0_eef_quat"], gripper], axis=-1)
-        else:
-            raise ValueError(f"Unsupported state_mode '{self.state_mode}'.")
-        return np.asarray(state, dtype=np.float32)
+        state_parts = []
+        for i in range(len(self.robots)):
+            robot_key = f"robot{i}"
+            joint_pos = np.asarray(raw_obs[f"{robot_key}_joint_pos"], dtype=np.float32)
+            gripper = np.asarray(raw_obs[f"{robot_key}_gripper_qpos"], dtype=np.float32)[
+                list(self.gripper_qpos_indices)
+            ]
+            if self.state_mode == "joint_gripper":
+                state_parts.extend([joint_pos, gripper])
+            else:
+                # "full" mode: include end-effector pose
+                eef_pos = np.asarray(raw_obs[f"{robot_key}_eef_pos"], dtype=np.float32)
+                eef_quat = np.asarray(raw_obs[f"{robot_key}_eef_quat"], dtype=np.float32)
+                state_parts.extend([eef_pos, eef_quat, joint_pos, gripper])
+        return np.concatenate(state_parts, axis=-1).astype(np.float32)
 
     def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
         if self.return_raw_obs:

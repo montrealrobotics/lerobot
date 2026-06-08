@@ -34,7 +34,6 @@ from .video_utils import VideoFrame
 
 logger = logging.getLogger(__name__)
 
-PADDED_VECTOR_FEATURES = {ACTION, OBS_STATE}
 NORMALIZED_FEATURE_DTYPES = {"timestamp": "float32"}
 CANONICAL_IMAGE_FEATURE_ALIASES = {
     "observation.images.right_wrist": [
@@ -348,7 +347,7 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
                 index for index, candidate_id in enumerate(self.normalization_ids) if candidate_id == normalization_id
             ]
             feature_shapes_by_id[int(normalization_id)] = {}
-            for key in PADDED_VECTOR_FEATURES.intersection(feature_keys):
+            for key in sorted(self.padded_feature_shapes.keys() & feature_keys):
                 shapes = [
                     tuple(self._datasets[dataset_index].meta.features[key]["shape"])
                     for dataset_index in dataset_indices
@@ -419,13 +418,23 @@ class MultiLeRobotDataset(torch.utils.data.Dataset):
 
     def _get_padded_feature_shapes(self, feature_keys: set[str]) -> dict[str, tuple[int, ...]]:
         feature_shapes = {}
-        for key in PADDED_VECTOR_FEATURES.intersection(feature_keys):
+        for key in feature_keys:
             shapes = [tuple(dataset.meta.features[key]["shape"]) for dataset in self._datasets]
-            if not all(len(shape) == 1 for shape in shapes):
-                continue
-            if len(set(shapes)) > 1:
+            dtypes = {dataset.meta.features[key]["dtype"] for dataset in self._datasets}
+            if len(set(shapes)) > 1 and self._is_paddable_vector_feature(shapes, dtypes):
                 feature_shapes[key] = (max(shape[0] for shape in shapes),)
         return feature_shapes
+
+    def _is_paddable_vector_feature(self, shapes: list[tuple[int, ...]], dtypes: set[str]) -> bool:
+        if not all(len(shape) == 1 for shape in shapes):
+            return False
+        if len(dtypes) != 1:
+            return False
+        try:
+            dtype = np.dtype(next(iter(dtypes)))
+        except TypeError:
+            return False
+        return np.issubdtype(dtype, np.number)
 
     def _validate_common_feature_shapes(self, feature_keys: set[str]) -> None:
         for key in sorted(feature_keys):

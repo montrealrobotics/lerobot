@@ -62,6 +62,7 @@ def make_config() -> TrainPipelineConfig:
         env=DexMimicGenEnv(
             task="SingleArmDrawerCleanup",
             camera_name="agentview,robot0_eye_in_hand",
+            state_mode="joint_gripper",
         ),
         resume=False,
         policy=PI05Config(

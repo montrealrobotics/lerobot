@@ -757,7 +757,7 @@ class DexMimicGenEnv(EnvConfig):
     fps: int = 20
     episode_length: int = 400
     obs_type: str = "pixels_agent_pos"
-    state_mode: str = "joint_gripper"
+    state_mode: str = "full"
     render_mode: str = "rgb_array"
     camera_name: str = "agentview,robot0_eye_in_hand"
     camera_name_mapping: dict[str, str] | None = None
