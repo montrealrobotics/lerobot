@@ -335,6 +335,14 @@ class _NormalizationMixin:
                 )
 
             mean, std = stats["mean"], stats["std"]
+            # Handle dimension mismatch: pad the tensor to match stats dimension.
+            # This can happen when an env observation has fewer dimensions than the
+            # dataset stats (e.g. single-robot env vs dual-robot dataset). The extra
+            # dimensions will be zero-centered by the (0 - mean) / std computation,
+            # and the model's prepare_state() pads further to max_state_dim.
+            if tensor.shape[-1] < mean.shape[-1]:
+                pad_width = mean.shape[-1] - tensor.shape[-1]
+                tensor = torch.nn.functional.pad(tensor, (0, pad_width))
             # Avoid division by zero by adding a small epsilon.
             denom = std + self.eps
             if inverse:

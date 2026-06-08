@@ -378,6 +378,7 @@ def make_pre_post_processors(
             dataset_stats=kwargs.get("dataset_stats"),
             dataset_stats_by_route=kwargs.get("dataset_stats_by_route"),
             route_feature_shapes=kwargs.get("route_feature_shapes"),
+            rename_map=kwargs.get("rename_map"),
         )
 
     elif isinstance(policy_cfg, GrootConfig):

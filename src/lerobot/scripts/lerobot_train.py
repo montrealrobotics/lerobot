@@ -369,6 +369,7 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     postprocessor_kwargs = {}
     if (processor_pretrained_path and not cfg.resume) or not processor_pretrained_path:
         processor_kwargs["dataset_stats"] = dataset.meta.stats
+        processor_kwargs["rename_map"] = cfg.rename_map
         if getattr(dataset.meta, "stats_by_normalization_id", None):
             processor_kwargs["dataset_stats_by_route"] = dataset.meta.stats_by_normalization_id
             processor_kwargs["route_feature_shapes"] = dataset.meta.feature_shapes_by_normalization_id
