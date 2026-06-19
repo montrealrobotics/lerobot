@@ -24,6 +24,8 @@ from lerobot.processor import (
     DataProcessorPipeline,
     IdentityProcessorStep,
     NormalizerProcessorStep,
+    RoutedNormalizerProcessorStep,
+    RoutedUnnormalizerProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
     hotswap_stats,
@@ -59,6 +61,169 @@ def test_tensor_conversion():
 
     assert tensor_stats[ACTION]["mean"].dtype == torch.float32
     assert tensor_stats[ACTION]["std"].dtype == torch.float32
+
+
+def test_routed_normalizer_uses_per_sample_route_stats():
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(3,)),
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+        FeatureType.ACTION: NormalizationMode.MIN_MAX,
+    }
+    stats_by_route = {
+        0: {
+            OBS_STATE: {"min": torch.zeros(3), "max": torch.ones(3)},
+            ACTION: {"min": torch.zeros(3), "max": torch.ones(3)},
+        },
+        1: {
+            OBS_STATE: {"min": torch.ones(3) * 10, "max": torch.ones(3) * 20},
+            ACTION: {"min": torch.ones(3) * -2, "max": torch.ones(3) * 2},
+        },
+    }
+    normalizer = RoutedNormalizerProcessorStep(
+        features=features,
+        norm_map=norm_map,
+        stats_by_route=stats_by_route,
+    )
+
+    transition = create_transition(
+        observation={
+            OBS_STATE: torch.tensor(
+                [
+                    [0.5, 1.0, 0.0],
+                    [1.0, 0.5, 0.0],
+                    [15.0, 10.0, 20.0],
+                    [20.0, 15.0, 10.0],
+                ]
+            )
+        },
+        action=torch.tensor(
+            [
+                [0.5, 0.0, 1.0],
+                [1.0, 0.5, 0.0],
+                [-2.0, 0.0, 2.0],
+                [2.0, -2.0, 0.0],
+            ]
+        ),
+        complementary_data={"normalization_id": torch.tensor([0, 0, 1, 1])},
+    )
+
+    normalized = normalizer(transition)
+
+    assert torch.allclose(
+        normalized[TransitionKey.OBSERVATION][OBS_STATE],
+        torch.tensor(
+            [
+                [0.0, 1.0, -1.0],
+                [1.0, 0.0, -1.0],
+                [0.0, -1.0, 1.0],
+                [1.0, 0.0, -1.0],
+            ]
+        ),
+    )
+    assert torch.allclose(
+        normalized[TransitionKey.ACTION],
+        torch.tensor(
+            [
+                [0.0, -1.0, 1.0],
+                [1.0, 0.0, -1.0],
+                [-1.0, 0.0, 1.0],
+                [1.0, -1.0, 0.0],
+            ]
+        ),
+    )
+
+
+def test_routed_normalizer_pads_eval_state_and_crops_eval_action():
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+        FeatureType.ACTION: NormalizationMode.MIN_MAX,
+    }
+    stats_by_route = {
+        1: {
+            OBS_STATE: {"min": torch.zeros(4), "max": torch.ones(4)},
+            ACTION: {"min": torch.zeros(4), "max": torch.ones(4)},
+        }
+    }
+    route_feature_shapes = {1: {OBS_STATE: (2,), ACTION: (2,)}}
+    normalizer = RoutedNormalizerProcessorStep(
+        features=features,
+        norm_map=norm_map,
+        stats_by_route=stats_by_route,
+        default_route=1,
+        route_feature_shapes=route_feature_shapes,
+    )
+    unnormalizer = RoutedUnnormalizerProcessorStep(
+        features={ACTION: features[ACTION]},
+        norm_map=norm_map,
+        stats_by_route=stats_by_route,
+        default_route=1,
+        route_feature_shapes=route_feature_shapes,
+    )
+
+    normalized = normalizer(create_transition(observation={OBS_STATE: torch.tensor([[0.5, 1.0]])}))
+    assert normalized[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 4)
+    assert torch.allclose(
+        normalized[TransitionKey.OBSERVATION][OBS_STATE],
+        torch.tensor([[0.0, 1.0, -1.0, -1.0]]),
+    )
+
+    unnormalized = unnormalizer(create_transition(action=torch.tensor([[0.0, 1.0, -1.0, -1.0]])))
+    assert unnormalized[TransitionKey.ACTION].shape == (1, 2)
+    assert torch.allclose(unnormalized[TransitionKey.ACTION], torch.tensor([[0.5, 1.0]]))
+
+
+def test_routed_normalizer_roundtrips_saved_route_stats():
+    import tempfile
+
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(3,)),
+    }
+    norm_map = {FeatureType.STATE: NormalizationMode.MIN_MAX}
+    stats_by_route = {
+        0: {OBS_STATE: {"min": torch.zeros(3), "max": torch.ones(3)}},
+        1: {OBS_STATE: {"min": torch.ones(3) * 10, "max": torch.ones(3) * 20}},
+    }
+    route_feature_shapes = {0: {OBS_STATE: (2,)}, 1: {OBS_STATE: (3,)}}
+    pipeline = DataProcessorPipeline(
+        steps=[
+            RoutedNormalizerProcessorStep(
+                features=features,
+                norm_map=norm_map,
+                stats_by_route=stats_by_route,
+                route_feature_shapes=route_feature_shapes,
+            )
+        ],
+        name="routed_pipeline",
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pipeline.save_pretrained(temp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            temp_dir,
+            config_filename="routed_pipeline.json",
+        )
+
+    loaded_normalizer = loaded_pipeline.steps[0]
+    assert isinstance(loaded_normalizer, RoutedNormalizerProcessorStep)
+    assert sorted(loaded_normalizer.stats_by_route) == [0, 1]
+    assert loaded_normalizer.route_feature_shapes == route_feature_shapes
+
+    transition = create_transition(
+        observation={OBS_STATE: torch.tensor([[15.0, 10.0, 20.0]])},
+        complementary_data={"normalization_id": torch.tensor([1])},
+    )
+    normalized = loaded_normalizer(transition)
+    assert torch.allclose(
+        normalized[TransitionKey.OBSERVATION][OBS_STATE],
+        torch.tensor([[0.0, -1.0, 1.0]]),
+    )
 
 
 def test_scalar_conversion():
