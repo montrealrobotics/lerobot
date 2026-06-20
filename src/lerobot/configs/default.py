@@ -76,6 +76,7 @@ class WandBConfig:
 @dataclass
 class EvalConfig:
     n_episodes: int = 50
+    n_videos: int = 4
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
     # Set to 0 for auto-tuning based on available CPU cores and n_episodes.
     batch_size: int = 0
