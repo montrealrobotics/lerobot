@@ -45,6 +45,7 @@ develop-eggs/
 *.egg
 MANIFEST
 slurm-*.out
+*.sbatch
 lib/
 lib64/
 
