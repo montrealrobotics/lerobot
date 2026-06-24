@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
 from lerobot.optim import AdamWConfig, CosineDecayWithWarmupSchedulerConfig
@@ -48,6 +49,12 @@ class SmolVLAConfig(PreTrainedConfig):
     # left and right wrist cameras in addition to the top camera.
     empty_cameras: int = 0
 
+    # Optional camera selection used when a policy should see one canonical
+    # external camera sampled from multiple raw dataset cameras.
+    random_external_camera_keys: list[str] = field(default_factory=list)
+    random_external_camera_output_key: str | None = None
+    random_external_camera_p: float = 0.5
+
     # Converts the joint and gripper values from the standard Aloha space to
     # the space used by the pi internal runtime which was used to train the base model.
     adapt_to_pi_aloha: bool = False
@@ -69,6 +76,14 @@ class SmolVLAConfig(PreTrainedConfig):
     freeze_vision_encoder: bool = True
     train_expert_only: bool = True
     train_state_proj: bool = True
+    force_current_processor_config: bool = False
+    use_category_specific_action_proj: bool = False
+    category_specific_action_proj_type: Literal["linear", "mlp"] = "linear"
+    max_num_embodiments: int = 32
+    embodiment_id_key: str = "embodiment_id"
+    default_embodiment_id: int = 0
+    default_normalization_id: int = 0
+    pretrained_action_proj_category: int = 0
 
     # Training presets
     optimizer_lr: float = 1e-4
@@ -118,6 +133,27 @@ class SmolVLAConfig(PreTrainedConfig):
         if self.use_delta_joint_actions_aloha:
             raise NotImplementedError(
                 "`use_delta_joint_actions_aloha` is used by smolvla for aloha real models. It is not ported yet in LeRobot."
+            )
+        if self.max_num_embodiments <= 0:
+            raise ValueError(f"max_num_embodiments must be positive, got {self.max_num_embodiments}")
+        if self.category_specific_action_proj_type not in ["linear", "mlp"]:
+            raise ValueError(
+                "category_specific_action_proj_type must be one of ['linear', 'mlp'], "
+                f"got {self.category_specific_action_proj_type}"
+            )
+        if not 0 <= self.default_embodiment_id < self.max_num_embodiments:
+            raise ValueError(
+                "default_embodiment_id must be in "
+                f"[0, {self.max_num_embodiments}), got {self.default_embodiment_id}"
+            )
+        if self.default_normalization_id < 0:
+            raise ValueError(
+                f"default_normalization_id must be non-negative, got {self.default_normalization_id}"
+            )
+        if not 0 <= self.pretrained_action_proj_category < self.max_num_embodiments:
+            raise ValueError(
+                "pretrained_action_proj_category must be in "
+                f"[0, {self.max_num_embodiments}), got {self.pretrained_action_proj_category}"
             )
 
     def validate_features(self) -> None:

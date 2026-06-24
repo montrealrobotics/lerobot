@@ -498,79 +498,79 @@ class MetaworldEnv(EnvConfig):
         )
 
 
-@EnvConfig.register_subclass("robocasa")
-@dataclass
-class RoboCasaEnv(EnvConfig):
-    task: str = "CloseFridge"
-    fps: int = 20
-    episode_length: int = 1000
-    obs_type: str = "pixels_agent_pos"
-    render_mode: str = "rgb_array"
-    camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
-    observation_height: int = 256
-    observation_width: int = 256
-    visualization_height: int = 512
-    visualization_width: int = 512
-    split: str | None = None
-    # Object-mesh registries to sample from. Upstream default is
-    # ("objaverse", "lightwheel"), but objaverse is ~30GB and the CI image
-    # only ships the lightwheel pack. Override to include objaverse once
-    # you've run `python -m robocasa.scripts.download_kitchen_assets
-    # --type objaverse` locally.
-    obj_registries: list[str] = field(default_factory=lambda: ["lightwheel"])
-    features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
-    )
-    features_map: dict[str, str] = field(default_factory=lambda: {ACTION: ACTION, "agent_pos": OBS_STATE})
+# @EnvConfig.register_subclass("robocasa")
+# @dataclass
+# class RoboCasaEnv(EnvConfig):
+#     task: str = "CloseFridge"
+#     fps: int = 20
+#     episode_length: int = 1000
+#     obs_type: str = "pixels_agent_pos"
+#     render_mode: str = "rgb_array"
+#     camera_name: str = "robot0_agentview_left,robot0_eye_in_hand,robot0_agentview_right"
+#     observation_height: int = 256
+#     observation_width: int = 256
+#     visualization_height: int = 512
+#     visualization_width: int = 512
+#     split: str | None = None
+#     # Object-mesh registries to sample from. Upstream default is
+#     # ("objaverse", "lightwheel"), but objaverse is ~30GB and the CI image
+#     # only ships the lightwheel pack. Override to include objaverse once
+#     # you've run `python -m robocasa.scripts.download_kitchen_assets
+#     # --type objaverse` locally.
+#     obj_registries: list[str] = field(default_factory=lambda: ["lightwheel"])
+#     features: dict[str, PolicyFeature] = field(
+#         default_factory=lambda: {ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(12,))}
+#     )
+#     features_map: dict[str, str] = field(default_factory=lambda: {ACTION: ACTION, "agent_pos": OBS_STATE})
 
-    def __post_init__(self):
-        if self.obs_type not in ("pixels", "pixels_agent_pos"):
-            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+#     def __post_init__(self):
+#         if self.obs_type not in ("pixels", "pixels_agent_pos"):
+#             raise ValueError(f"Unsupported obs_type: {self.obs_type}")
 
-        # Preserve raw RoboCasa camera names end-to-end (e.g.
-        # `observation.images.robot0_agentview_left`). This matches the
-        # naming convention used by the RoboCasa datasets on the Hub, so
-        # trained policies don't need a `--rename_map` at eval time.
-        cams = [c.strip() for c in self.camera_name.split(",") if c.strip()]
-        for cam in cams:
-            self.features[f"pixels/{cam}"] = PolicyFeature(
-                type=FeatureType.VISUAL,
-                shape=(self.observation_height, self.observation_width, 3),
-            )
-            self.features_map[f"pixels/{cam}"] = f"{OBS_IMAGES}.{cam}"
+#         # Preserve raw RoboCasa camera names end-to-end (e.g.
+#         # `observation.images.robot0_agentview_left`). This matches the
+#         # naming convention used by the RoboCasa datasets on the Hub, so
+#         # trained policies don't need a `--rename_map` at eval time.
+#         cams = [c.strip() for c in self.camera_name.split(",") if c.strip()]
+#         for cam in cams:
+#             self.features[f"pixels/{cam}"] = PolicyFeature(
+#                 type=FeatureType.VISUAL,
+#                 shape=(self.observation_height, self.observation_width, 3),
+#             )
+#             self.features_map[f"pixels/{cam}"] = f"{OBS_IMAGES}.{cam}"
 
-        if self.obs_type == "pixels_agent_pos":
-            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
+#         if self.obs_type == "pixels_agent_pos":
+#             self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(16,))
 
-    @property
-    def gym_kwargs(self) -> dict:
-        kwargs: dict[str, Any] = {
-            "obs_type": self.obs_type,
-            "render_mode": self.render_mode,
-            "observation_height": self.observation_height,
-            "observation_width": self.observation_width,
-            "visualization_height": self.visualization_height,
-            "visualization_width": self.visualization_width,
-        }
-        if self.split is not None:
-            kwargs["split"] = self.split
-        return kwargs
+#     @property
+#     def gym_kwargs(self) -> dict:
+#         kwargs: dict[str, Any] = {
+#             "obs_type": self.obs_type,
+#             "render_mode": self.render_mode,
+#             "observation_height": self.observation_height,
+#             "observation_width": self.observation_width,
+#             "visualization_height": self.visualization_height,
+#             "visualization_width": self.visualization_width,
+#         }
+#         if self.split is not None:
+#             kwargs["split"] = self.split
+#         return kwargs
 
-    def create_envs(self, n_envs: int, use_async_envs: bool = False):
-        from .robocasa import create_robocasa_envs
+#     def create_envs(self, n_envs: int, use_async_envs: bool = False):
+#         from .robocasa import create_robocasa_envs
 
-        if self.task is None:
-            raise ValueError("RoboCasaEnv requires a task to be specified")
-        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
-        return create_robocasa_envs(
-            task=self.task,
-            n_envs=n_envs,
-            camera_name=self.camera_name,
-            gym_kwargs=self.gym_kwargs,
-            env_cls=env_cls,
-            episode_length=self.episode_length,
-            obj_registries=tuple(self.obj_registries),
-        )
+#         if self.task is None:
+#             raise ValueError("RoboCasaEnv requires a task to be specified")
+#         env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+#         return create_robocasa_envs(
+#             task=self.task,
+#             n_envs=n_envs,
+#             camera_name=self.camera_name,
+#             gym_kwargs=self.gym_kwargs,
+#             env_cls=env_cls,
+#             episode_length=self.episode_length,
+#             obj_registries=tuple(self.obj_registries),
+#         )
 
 
 @EnvConfig.register_subclass("vlabench")
@@ -637,6 +637,196 @@ class VLABenchEnv(EnvConfig):
             env_cls=env_cls,
         )
 
+
+@EnvConfig.register_subclass("robocasa")
+@dataclass
+class RoboCasaEnv(EnvConfig):
+    task: str | None = None  # Task name (required)
+    robot: str = "PandaDexLeapRHOmron"  # "PandaOmron" or "PandaDexLeapRHOmron"
+    fps: int = 20
+    episode_length: int | None = None  # set inside the env for each task
+    obs_type: str = "pixels_agent_pos"
+    render_mode: str = "rgb_array"
+    camera_name: str = "robot0_agentview_center,robot0_eye_in_hand"
+    camera_name_mapping: dict[str, str] | None = None
+    observation_height: int = 256
+    observation_width: int = 256
+    features: dict[str, PolicyFeature] = field(
+        default_factory=lambda: {}
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/robot0_agentview_center_image": "observation.images.robot0_agentview_center",
+            "pixels/robot0_agentview_left_image": "observation.images.robot0_agentview_left",
+            "pixels/robot0_agentview_right_image": "observation.images.robot0_agentview_right",
+            "pixels/robot0_eye_in_hand_image": "observation.images.robot0_eye_in_hand",
+        }
+    )
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/robot0_agentview_center_image": "observation.images.robot0_agentview_center",
+            "pixels/robot0_agentview_left_image": "observation.images.robot0_agentview_left",
+            "pixels/robot0_agentview_right_image": "observation.images.robot0_agentview_right",
+            "pixels/robot0_eye_in_hand_image": "observation.images.robot0_eye_in_hand",
+        }
+    )
+
+    def __post_init__(self):
+        # Determine dims from robot type
+        _robot_dims = {
+            "PandaOmron": {"action": 7, "state": 8},
+            "PandaDexLeapRHOmron": {"action": 22, "state": 23},
+        }
+        dims = _robot_dims.get(self.robot)
+        if dims is None:
+            raise ValueError(f"Unsupported robot '{self.robot}'. Supported: {list(_robot_dims.keys())}")
+        action_dim = dims["action"]
+        state_dim = dims["state"]
+
+        # Set action feature
+        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(action_dim,))
+
+        if self.obs_type == "pixels":
+            self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_left_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+        elif self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(state_dim,))
+            self.features["pixels/robot0_agentview_center_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_left_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_agentview_right_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+            self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+                type=FeatureType.VISUAL, shape=(self.observation_height, self.observation_width, 3)
+            )
+        else:
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "robot": self.robot,
+            "obs_type": self.obs_type,
+            "render_mode": self.render_mode,
+            "observation_width": self.observation_width,
+            "observation_height": self.observation_height,
+            "camera_name": self.camera_name,
+            "camera_name_mapping": self.camera_name_mapping,
+            "max_episode_steps": self.episode_length,
+        }
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .robocasa_env import create_robocasa_envs
+
+        if self.task is None:
+            raise ValueError("RoboCasaEnv requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_robocasa_envs(
+            task=self.task,
+            n_envs=n_envs,
+            camera_name=self.camera_name,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+        )
+
+
+@EnvConfig.register_subclass("dexmimicgen")
+@dataclass
+class DexMimicGenEnv(EnvConfig):
+    task: str | None = "SingleArmDrawerCleanup"
+    dexmimicgen_path: str | None = "~/dexmimicgen"
+    robots: list[str] | None = None
+    fps: int = 20
+    episode_length: int = 400
+    obs_type: str = "pixels_agent_pos"
+    state_mode: str = "full"
+    render_mode: str = "rgb_array"
+    camera_name: str = "agentview,robot0_eye_in_hand"
+    camera_name_mapping: dict[str, str] | None = None
+    primary_observation_height: int = 256
+    primary_observation_width: int = 256
+    wrist_observation_height: int = 128
+    wrist_observation_width: int = 128
+    action_dim: int = 12
+    state_dim: int = 13
+    gripper_qpos_indices: tuple[int, ...] = (0, 2, 4, 6, 8, 11)
+    features: dict[str, PolicyFeature] = field(default_factory=lambda: {})
+    features_map: dict[str, str] = field(
+        default_factory=lambda: {
+            ACTION: ACTION,
+            "agent_pos": OBS_STATE,
+            "pixels/agentview_image": f"{OBS_IMAGES}.agentview",
+            "pixels/robot0_eye_in_hand_image": f"{OBS_IMAGES}.robot0_eye_in_hand",
+        }
+    )
+
+    def __post_init__(self):
+        self.features[ACTION] = PolicyFeature(type=FeatureType.ACTION, shape=(self.action_dim,))
+
+        if self.obs_type == "pixels_agent_pos":
+            self.features["agent_pos"] = PolicyFeature(type=FeatureType.STATE, shape=(self.state_dim,))
+        elif self.obs_type != "pixels":
+            raise ValueError(f"Unsupported obs_type: {self.obs_type}")
+
+        self.features["pixels/agentview_image"] = PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(self.primary_observation_height, self.primary_observation_width, 3),
+        )
+        self.features["pixels/robot0_eye_in_hand_image"] = PolicyFeature(
+            type=FeatureType.VISUAL,
+            shape=(self.wrist_observation_height, self.wrist_observation_width, 3),
+        )
+
+    @property
+    def gym_kwargs(self) -> dict:
+        return {
+            "dexmimicgen_path": self.dexmimicgen_path,
+            "robots": self.robots,
+            "obs_type": self.obs_type,
+            "state_mode": self.state_mode,
+            "render_mode": self.render_mode,
+            "camera_name": self.camera_name,
+            "camera_name_mapping": self.camera_name_mapping,
+            "camera_sizes": {
+                "agentview": (self.primary_observation_height, self.primary_observation_width),
+                "robot0_eye_in_hand": (self.wrist_observation_height, self.wrist_observation_width),
+            },
+            "gripper_qpos_indices": self.gripper_qpos_indices,
+            "control_freq": self.fps,
+            "max_episode_steps": self.episode_length,
+        }
+
+    def create_envs(self, n_envs: int, use_async_envs: bool = False):
+        from .dexmimicgen import create_dexmimicgen_envs
+
+        if self.task is None:
+            raise ValueError("DexMimicGenEnv requires a task to be specified")
+        env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        return create_dexmimicgen_envs(
+            task=self.task,
+            n_envs=n_envs,
+            camera_name=self.camera_name,
+            gym_kwargs=self.gym_kwargs,
+            env_cls=env_cls,
+        )
 
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass

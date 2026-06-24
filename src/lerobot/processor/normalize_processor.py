@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import torch
+import torch.nn.functional as F  # noqa: N812
 from torch import Tensor
 
 from lerobot.configs import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
@@ -30,7 +31,7 @@ from lerobot.types import EnvTransition, PolicyAction, TransitionKey
 if TYPE_CHECKING:
     from lerobot.datasets import LeRobotDataset
 
-from lerobot.utils.constants import ACTION
+from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .converters import from_tensor_to_numpy, to_tensor
 from .pipeline import PolicyProcessorPipeline, ProcessorStep, ProcessorStepRegistry, RobotObservation
@@ -134,6 +135,24 @@ class _NormalizationMixin:
         if self.dtype is None:
             self.dtype = torch.float32
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+        self._reshape_visual_stats()
+
+    def _reshape_visual_stats(self) -> None:
+        """Reshape flat ``(C,)`` visual stats to ``(C, 1, 1)`` for image broadcasting.
+
+        No-op for stats from :func:`~lerobot.datasets.compute_stats.compute_stats`
+        (already ``(C, 1, 1)``). Needed by RL training, which can start without
+        a dataset and supplies stats manually via JSON config.
+        """
+        for key, feature in self.features.items():
+            if feature.type != FeatureType.VISUAL:
+                continue
+            if key not in self._tensor_stats:
+                continue
+            for stat_name, stat_tensor in self._tensor_stats[key].items():
+                if not isinstance(stat_tensor, Tensor) or stat_tensor.ndim != 1:
+                    continue
+                self._tensor_stats[key][stat_name] = stat_tensor.reshape(-1, 1, 1)
 
     def to(
         self, device: torch.device | str | None = None, dtype: torch.dtype | None = None
@@ -152,6 +171,7 @@ class _NormalizationMixin:
         if dtype is not None:
             self.dtype = dtype
         self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)
+        self._reshape_visual_stats()
         return self
 
     def state_dict(self) -> dict[str, Tensor]:
@@ -201,6 +221,7 @@ class _NormalizationMixin:
             # Don't load from state_dict, keep the explicitly provided stats
             # But ensure _tensor_stats is properly initialized
             self._tensor_stats = to_tensor(self.stats, device=self.device, dtype=self.dtype)  # type: ignore[assignment]
+            self._reshape_visual_stats()
             return
 
         # Normal behavior: load stats from state_dict
@@ -211,6 +232,7 @@ class _NormalizationMixin:
             self._tensor_stats.setdefault(key, {})[stat_name] = tensor.to(
                 dtype=torch.float32, device=self.device
             )
+        self._reshape_visual_stats()
 
         # Reconstruct the original stats dict from tensor stats for compatibility with to() method
         # and other functions that rely on self.stats
@@ -334,6 +356,14 @@ class _NormalizationMixin:
                 )
 
             mean, std = stats["mean"], stats["std"]
+            # Handle dimension mismatch: pad the tensor to match stats dimension.
+            # This can happen when an env observation has fewer dimensions than the
+            # dataset stats (e.g. single-robot env vs dual-robot dataset). The extra
+            # dimensions will be zero-centered by the (0 - mean) / std computation,
+            # and the model's prepare_state() pads further to max_state_dim.
+            if tensor.shape[-1] < mean.shape[-1]:
+                pad_width = mean.shape[-1] - tensor.shape[-1]
+                tensor = torch.nn.functional.pad(tensor, (0, pad_width))
             # Avoid division by zero by adding a small epsilon.
             denom = std + self.eps
             if inverse:
@@ -472,6 +502,371 @@ class NormalizerProcessorStep(_NormalizationMixin, ProcessorStep):
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
     ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
         return features
+
+
+@dataclass
+class _RoutedNormalizationMixin(ProcessorStep):
+    features: dict[str, PolicyFeature]
+    norm_map: dict[FeatureType, NormalizationMode]
+    stats_by_route: dict[int, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    route_key: str = "normalization_id"
+    default_route: int = 0
+    route_feature_shapes: dict[int, dict[str, tuple[int, ...]]] | None = None
+    device: torch.device | str | None = None
+    dtype: torch.dtype | None = None
+    eps: float = 1e-8
+    normalize_observation_keys: set[str] | None = None
+
+    _tensor_stats_by_route: dict[int, dict[str, dict[str, Tensor]]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _stats_explicitly_provided: bool = field(default=False, init=False, repr=False)
+
+    def __post_init__(self):
+        if self.features:
+            first_val = next(iter(self.features.values()))
+            if isinstance(first_val, dict):
+                self.features = {
+                    key: PolicyFeature(type=FeatureType(ft_dict["type"]), shape=tuple(ft_dict["shape"]))
+                    for key, ft_dict in self.features.items()
+                }
+
+        if self.norm_map and all(isinstance(k, str) for k in self.norm_map):
+            self.norm_map = {
+                FeatureType(ft_type_str): NormalizationMode(norm_mode_str)
+                for ft_type_str, norm_mode_str in self.norm_map.items()
+            }
+
+        self.stats_by_route = {int(route): stats for route, stats in self.stats_by_route.items()}
+        self.route_feature_shapes = {
+            int(route): {key: tuple(shape) for key, shape in shapes.items()}
+            for route, shapes in (self.route_feature_shapes or {}).items()
+        }
+        self.default_route = int(self.default_route)
+        self._stats_explicitly_provided = bool(self.stats_by_route)
+        if self.dtype is None:
+            self.dtype = torch.float32
+        self._tensor_stats_by_route = {
+            route: to_tensor(stats, device=self.device, dtype=self.dtype)
+            for route, stats in self.stats_by_route.items()
+        }
+
+    def get_config(self) -> dict[str, Any]:
+        config = {
+            "eps": self.eps,
+            "features": {
+                key: {"type": ft.type.value, "shape": ft.shape} for key, ft in self.features.items()
+            },
+            "norm_map": {ft_type.value: norm_mode.value for ft_type, norm_mode in self.norm_map.items()},
+            "route_key": self.route_key,
+            "default_route": self.default_route,
+            "route_feature_shapes": self.route_feature_shapes,
+        }
+        if self.normalize_observation_keys is not None:
+            config["normalize_observation_keys"] = sorted(self.normalize_observation_keys)
+        return config
+
+    def to(
+        self, device: torch.device | str | None = None, dtype: torch.dtype | None = None
+    ) -> _RoutedNormalizationMixin:
+        if device is not None:
+            self.device = device
+        if dtype is not None:
+            self.dtype = dtype
+        self._tensor_stats_by_route = {
+            route: to_tensor(stats, device=self.device, dtype=self.dtype)
+            for route, stats in self.stats_by_route.items()
+        }
+        return self
+
+    def state_dict(self) -> dict[str, Tensor]:
+        flat: dict[str, Tensor] = {}
+        for route, route_stats in self._tensor_stats_by_route.items():
+            for key, sub in route_stats.items():
+                for stat_name, tensor in sub.items():
+                    flat[f"{route}.{key}.{stat_name}"] = tensor.cpu()
+        return flat
+
+    def load_state_dict(self, state: dict[str, Tensor]) -> None:
+        if self._stats_explicitly_provided and self.stats_by_route:
+            self._tensor_stats_by_route = {
+                route: to_tensor(stats, device=self.device, dtype=self.dtype)
+                for route, stats in self.stats_by_route.items()
+            }
+            return
+
+        self._tensor_stats_by_route.clear()
+        for flat_key, tensor in state.items():
+            route_str, key_and_stat = flat_key.split(".", 1)
+            key, stat_name = key_and_stat.rsplit(".", 1)
+            route = int(route_str)
+            self._tensor_stats_by_route.setdefault(route, {}).setdefault(key, {})[stat_name] = tensor.to(
+                dtype=torch.float32, device=self.device
+            )
+
+        self.stats_by_route = {}
+        for route, route_stats in self._tensor_stats_by_route.items():
+            self.stats_by_route[route] = {}
+            for key, tensor_dict in route_stats.items():
+                self.stats_by_route[route][key] = {
+                    stat_name: from_tensor_to_numpy(tensor) for stat_name, tensor in tensor_dict.items()
+                }
+
+    def _route_ids(self, transition: EnvTransition) -> Tensor | None:
+        complementary_data = transition.get(TransitionKey.COMPLEMENTARY_DATA, {}) or {}
+        route = complementary_data.get(self.route_key, None)
+        if route is None:
+            return None
+        return torch.as_tensor(route, dtype=torch.long).reshape(-1)
+
+    def _stats_for_route(self, route: int) -> dict[str, dict[str, Tensor]]:
+        if route in self._tensor_stats_by_route:
+            return self._tensor_stats_by_route[route]
+        if self.default_route in self._tensor_stats_by_route:
+            return self._tensor_stats_by_route[self.default_route]
+        raise KeyError(
+            f"No normalization stats for route {route}; available routes are "
+            f"{sorted(self._tensor_stats_by_route)}."
+        )
+
+    def _normalize_observation(
+        self, observation: RobotObservation, route_ids: Tensor | None, inverse: bool
+    ) -> dict[str, Tensor]:
+        new_observation = dict(observation)
+        for key, feature in self.features.items():
+            if self.normalize_observation_keys is not None and key not in self.normalize_observation_keys:
+                continue
+            if feature.type != FeatureType.ACTION and key in new_observation:
+                tensor = torch.as_tensor(new_observation[key])
+                new_observation[key] = self._apply_routed_transform(
+                    tensor, key, feature.type, route_ids, inverse=inverse, crop_to_route_shape=False
+                )
+        return new_observation
+
+    def _normalize_action(
+        self, action: Tensor, route_ids: Tensor | None, inverse: bool, crop_to_route_shape: bool
+    ) -> Tensor:
+        return self._apply_routed_transform(
+            action,
+            ACTION,
+            FeatureType.ACTION,
+            route_ids,
+            inverse=inverse,
+            crop_to_route_shape=crop_to_route_shape,
+        )
+
+    def _apply_routed_transform(
+        self,
+        tensor: Tensor,
+        key: str,
+        feature_type: FeatureType,
+        route_ids: Tensor | None,
+        *,
+        inverse: bool,
+        crop_to_route_shape: bool,
+    ) -> Tensor:
+        if route_ids is None or route_ids.numel() <= 1:
+            route = (
+                int(route_ids.item())
+                if route_ids is not None and route_ids.numel() == 1
+                else self.default_route
+            )
+            return self._apply_transform_for_route(
+                tensor,
+                key,
+                feature_type,
+                route,
+                inverse=inverse,
+                crop_to_route_shape=crop_to_route_shape,
+            )
+
+        route_ids = route_ids.to(device=tensor.device)
+        output: Tensor | None = None
+        for route_tensor in torch.unique(route_ids):
+            route = int(route_tensor.item())
+            mask = route_ids == route
+            routed_tensor = self._apply_transform_for_route(
+                tensor[mask],
+                key,
+                feature_type,
+                route,
+                inverse=inverse,
+                crop_to_route_shape=False,
+            )
+            if output is None:
+                # Use the processed shape for feature dims — the input tensor may have
+                # a different feature dim than the routed stats (e.g. a gripper state
+                # [B, 8] being padded to [B, 23] by _align_tensor_to_stats).
+                output = torch.empty(
+                    (tensor.shape[0], *routed_tensor.shape[1:]),
+                    dtype=routed_tensor.dtype,
+                    device=routed_tensor.device,
+                )
+            output[mask] = routed_tensor
+        if output is None:
+            return tensor
+        return output
+
+    def _apply_transform_for_route(
+        self,
+        tensor: Tensor,
+        key: str,
+        feature_type: FeatureType,
+        route: int,
+        *,
+        inverse: bool,
+        crop_to_route_shape: bool,
+    ) -> Tensor:
+        norm_mode = self.norm_map.get(feature_type, NormalizationMode.IDENTITY)
+        route_stats = self._stats_for_route(route)
+        if norm_mode == NormalizationMode.IDENTITY or key not in route_stats:
+            return tensor
+
+        if norm_mode not in (
+            NormalizationMode.MEAN_STD,
+            NormalizationMode.MIN_MAX,
+            NormalizationMode.QUANTILES,
+            NormalizationMode.QUANTILE10,
+        ):
+            raise ValueError(f"Unsupported normalization mode: {norm_mode}")
+
+        stats = route_stats[key]
+        first_stat = next(iter(stats.values()))
+        if first_stat.device != tensor.device or first_stat.dtype != tensor.dtype:
+            self.to(device=tensor.device, dtype=tensor.dtype)
+            stats = self._stats_for_route(route)[key]
+
+        tensor = self._align_tensor_to_stats(tensor, key, stats)
+
+        if norm_mode == NormalizationMode.MEAN_STD:
+            mean, std = stats.get("mean"), stats.get("std")
+            if mean is None or std is None:
+                raise ValueError("MEAN_STD normalization mode requires mean and std stats.")
+            transformed = tensor * std + mean if inverse else (tensor - mean) / (std + self.eps)
+        elif norm_mode == NormalizationMode.MIN_MAX:
+            min_val, max_val = stats.get("min"), stats.get("max")
+            if min_val is None or max_val is None:
+                raise ValueError("MIN_MAX normalization mode requires min and max stats.")
+            denom = torch.where(
+                max_val - min_val == 0,
+                torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype),
+                max_val - min_val,
+            )
+            transformed = (
+                (tensor + 1) / 2 * denom + min_val if inverse else 2 * (tensor - min_val) / denom - 1
+            )
+        elif norm_mode == NormalizationMode.QUANTILES:
+            q01, q99 = stats.get("q01"), stats.get("q99")
+            if q01 is None or q99 is None:
+                raise ValueError("QUANTILES normalization mode requires q01 and q99 stats.")
+            denom = torch.where(
+                q99 - q01 == 0,
+                torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype),
+                q99 - q01,
+            )
+            transformed = (
+                (tensor + 1.0) * denom / 2.0 + q01 if inverse else 2.0 * (tensor - q01) / denom - 1.0
+            )
+        else:
+            q10, q90 = stats.get("q10"), stats.get("q90")
+            if q10 is None or q90 is None:
+                raise ValueError("QUANTILE10 normalization mode requires q10 and q90 stats.")
+            denom = torch.where(
+                q90 - q10 == 0,
+                torch.tensor(self.eps, device=tensor.device, dtype=tensor.dtype),
+                q90 - q10,
+            )
+            transformed = (
+                (tensor + 1.0) * denom / 2.0 + q10 if inverse else 2.0 * (tensor - q10) / denom - 1.0
+            )
+
+        if inverse and crop_to_route_shape:
+            transformed = self._crop_tensor_to_route_shape(transformed, key, route)
+        return transformed
+
+    def _align_tensor_to_stats(self, tensor: Tensor, key: str, stats: dict[str, Tensor]) -> Tensor:
+        if key not in {ACTION, OBS_STATE}:
+            return tensor
+
+        stat_shape = next(
+            (
+                tuple(stat.shape)
+                for stat_name, stat in stats.items()
+                if stat_name != "count" and stat.ndim > 0
+            ),
+            None,
+        )
+        if not stat_shape:
+            return tensor
+        target_dim = stat_shape[-1]
+        current_dim = tensor.shape[-1]
+        if current_dim == target_dim:
+            return tensor
+        if current_dim > target_dim:
+            return tensor[..., :target_dim]
+        return F.pad(tensor, (0, target_dim - current_dim))
+
+    def _crop_tensor_to_route_shape(self, tensor: Tensor, key: str, route: int) -> Tensor:
+        target_shape = (self.route_feature_shapes or {}).get(route, {}).get(key)
+        if not target_shape:
+            return tensor
+        target_dim = target_shape[-1]
+        return tensor[..., :target_dim]
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        return features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="routed_normalizer_processor")
+class RoutedNormalizerProcessorStep(_RoutedNormalizationMixin):
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        new_transition = transition.copy()
+        route_ids = self._route_ids(new_transition)
+
+        observation = new_transition.get(TransitionKey.OBSERVATION)
+        if observation is not None:
+            new_transition[TransitionKey.OBSERVATION] = self._normalize_observation(
+                observation, route_ids, inverse=False
+            )
+
+        action = new_transition.get(TransitionKey.ACTION)
+        if action is None:
+            return new_transition
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+
+        new_transition[TransitionKey.ACTION] = self._normalize_action(
+            action, route_ids, inverse=False, crop_to_route_shape=False
+        )
+        return new_transition
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="routed_unnormalizer_processor")
+class RoutedUnnormalizerProcessorStep(_RoutedNormalizationMixin):
+    def __call__(self, transition: EnvTransition) -> EnvTransition:
+        new_transition = transition.copy()
+        route_ids = self._route_ids(new_transition)
+
+        observation = new_transition.get(TransitionKey.OBSERVATION)
+        if observation is not None:
+            new_transition[TransitionKey.OBSERVATION] = self._normalize_observation(
+                observation, route_ids, inverse=True
+            )
+
+        action = new_transition.get(TransitionKey.ACTION)
+        if action is None:
+            return new_transition
+        if not isinstance(action, PolicyAction):
+            raise ValueError(f"Action should be a PolicyAction type got {type(action)}")
+
+        new_transition[TransitionKey.ACTION] = self._normalize_action(
+            action, route_ids, inverse=True, crop_to_route_shape=True
+        )
+        return new_transition
 
 
 @dataclass

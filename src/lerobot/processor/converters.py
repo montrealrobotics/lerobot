@@ -169,10 +169,23 @@ def _extract_complementary_data(batch: dict[str, Any]) -> dict[str, Any]:
     task_key = {"task": batch["task"]} if "task" in batch else {}
     subtask_key = {"subtask": batch["subtask"]} if "subtask" in batch else {}
     index_key = {"index": batch["index"]} if "index" in batch else {}
+    dataset_index_key = {"dataset_index": batch["dataset_index"]} if "dataset_index" in batch else {}
+    normalization_id_key = {"normalization_id": batch["normalization_id"]} if "normalization_id" in batch else {}
+    embodiment_id_key = {"embodiment_id": batch["embodiment_id"]} if "embodiment_id" in batch else {}
     task_index_key = {"task_index": batch["task_index"]} if "task_index" in batch else {}
     episode_index_key = {"episode_index": batch["episode_index"]} if "episode_index" in batch else {}
 
-    return {**pad_keys, **task_key, **subtask_key, **index_key, **task_index_key, **episode_index_key}
+    return {
+        **pad_keys,
+        **task_key,
+        **subtask_key,
+        **index_key,
+        **dataset_index_key,
+        **normalization_id_key,
+        **embodiment_id_key,
+        **task_index_key,
+        **episode_index_key,
+    }
 
 
 def create_transition(

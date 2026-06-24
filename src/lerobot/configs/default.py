@@ -26,7 +26,16 @@ class DatasetConfig:
     # keys common between the datasets are kept. Each dataset gets and additional transform that inserts the
     # "dataset_index" into the returned item. The index mapping is made according to the order in which the
     # datasets are provided.
-    repo_id: str
+    repo_id: str | list[str]
+    # Optional per-dataset embodiment ids for multi-dataset training. When set, the corresponding
+    # "embodiment_id" is inserted into every sample from that dataset.
+    embodiment_ids: list[int] | None = None
+    # Optional per-dataset normalization ids for multi-dataset training. Datasets that share an id share
+    # normalization statistics while still remaining separate datasets for sampling and logging.
+    normalization_ids: list[int] | None = None
+    # Optional per-dataset mixture weights. These are interpreted as dataset-level probabilities, not
+    # per-frame weights, so each frame receives weight sampling_weight_i / num_frames_i.
+    sampling_weights: list[float] | None = None
     # Root directory for a concrete local dataset tree (e.g. 'dataset/path'). If None, local datasets are
     # looked up under $HF_LEROBOT_HOME/repo_id and Hub downloads use a revision-safe cache under $HF_LEROBOT_HOME/hub.
     root: str | None = None
@@ -55,7 +64,7 @@ class DatasetConfig:
 class WandBConfig:
     enable: bool = False
     # Set to true to disable saving an artifact despite training.save_checkpoint=True
-    disable_artifact: bool = False
+    disable_artifact: bool = True
     project: str = "lerobot"
     entity: str | None = None
     notes: str | None = None
@@ -67,6 +76,7 @@ class WandBConfig:
 @dataclass
 class EvalConfig:
     n_episodes: int = 50
+    n_videos: int = 4
     # `batch_size` specifies the number of environments to use in a gym.vector.VectorEnv.
     # Set to 0 for auto-tuning based on available CPU cores and n_episodes.
     batch_size: int = 0
@@ -117,3 +127,7 @@ class PeftConfig:
     # the rank used for the adapter. In general a higher rank means more trainable parameters and closer to full
     # fine-tuning.
     r: int = 16
+
+    # Optional per-module rank overrides. This maps module-name patterns to LoRA ranks and is passed through
+    # to PEFT's LoraConfig as rank_pattern.
+    rank_pattern: dict[str, int] | None = None

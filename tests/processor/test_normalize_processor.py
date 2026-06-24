@@ -24,6 +24,8 @@ from lerobot.processor import (
     DataProcessorPipeline,
     IdentityProcessorStep,
     NormalizerProcessorStep,
+    RoutedNormalizerProcessorStep,
+    RoutedUnnormalizerProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
     hotswap_stats,
@@ -59,6 +61,169 @@ def test_tensor_conversion():
 
     assert tensor_stats[ACTION]["mean"].dtype == torch.float32
     assert tensor_stats[ACTION]["std"].dtype == torch.float32
+
+
+def test_routed_normalizer_uses_per_sample_route_stats():
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(3,)),
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(3,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+        FeatureType.ACTION: NormalizationMode.MIN_MAX,
+    }
+    stats_by_route = {
+        0: {
+            OBS_STATE: {"min": torch.zeros(3), "max": torch.ones(3)},
+            ACTION: {"min": torch.zeros(3), "max": torch.ones(3)},
+        },
+        1: {
+            OBS_STATE: {"min": torch.ones(3) * 10, "max": torch.ones(3) * 20},
+            ACTION: {"min": torch.ones(3) * -2, "max": torch.ones(3) * 2},
+        },
+    }
+    normalizer = RoutedNormalizerProcessorStep(
+        features=features,
+        norm_map=norm_map,
+        stats_by_route=stats_by_route,
+    )
+
+    transition = create_transition(
+        observation={
+            OBS_STATE: torch.tensor(
+                [
+                    [0.5, 1.0, 0.0],
+                    [1.0, 0.5, 0.0],
+                    [15.0, 10.0, 20.0],
+                    [20.0, 15.0, 10.0],
+                ]
+            )
+        },
+        action=torch.tensor(
+            [
+                [0.5, 0.0, 1.0],
+                [1.0, 0.5, 0.0],
+                [-2.0, 0.0, 2.0],
+                [2.0, -2.0, 0.0],
+            ]
+        ),
+        complementary_data={"normalization_id": torch.tensor([0, 0, 1, 1])},
+    )
+
+    normalized = normalizer(transition)
+
+    assert torch.allclose(
+        normalized[TransitionKey.OBSERVATION][OBS_STATE],
+        torch.tensor(
+            [
+                [0.0, 1.0, -1.0],
+                [1.0, 0.0, -1.0],
+                [0.0, -1.0, 1.0],
+                [1.0, 0.0, -1.0],
+            ]
+        ),
+    )
+    assert torch.allclose(
+        normalized[TransitionKey.ACTION],
+        torch.tensor(
+            [
+                [0.0, -1.0, 1.0],
+                [1.0, 0.0, -1.0],
+                [-1.0, 0.0, 1.0],
+                [1.0, -1.0, 0.0],
+            ]
+        ),
+    )
+
+
+def test_routed_normalizer_pads_eval_state_and_crops_eval_action():
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(4,)),
+        ACTION: PolicyFeature(type=FeatureType.ACTION, shape=(4,)),
+    }
+    norm_map = {
+        FeatureType.STATE: NormalizationMode.MIN_MAX,
+        FeatureType.ACTION: NormalizationMode.MIN_MAX,
+    }
+    stats_by_route = {
+        1: {
+            OBS_STATE: {"min": torch.zeros(4), "max": torch.ones(4)},
+            ACTION: {"min": torch.zeros(4), "max": torch.ones(4)},
+        }
+    }
+    route_feature_shapes = {1: {OBS_STATE: (2,), ACTION: (2,)}}
+    normalizer = RoutedNormalizerProcessorStep(
+        features=features,
+        norm_map=norm_map,
+        stats_by_route=stats_by_route,
+        default_route=1,
+        route_feature_shapes=route_feature_shapes,
+    )
+    unnormalizer = RoutedUnnormalizerProcessorStep(
+        features={ACTION: features[ACTION]},
+        norm_map=norm_map,
+        stats_by_route=stats_by_route,
+        default_route=1,
+        route_feature_shapes=route_feature_shapes,
+    )
+
+    normalized = normalizer(create_transition(observation={OBS_STATE: torch.tensor([[0.5, 1.0]])}))
+    assert normalized[TransitionKey.OBSERVATION][OBS_STATE].shape == (1, 4)
+    assert torch.allclose(
+        normalized[TransitionKey.OBSERVATION][OBS_STATE],
+        torch.tensor([[0.0, 1.0, -1.0, -1.0]]),
+    )
+
+    unnormalized = unnormalizer(create_transition(action=torch.tensor([[0.0, 1.0, -1.0, -1.0]])))
+    assert unnormalized[TransitionKey.ACTION].shape == (1, 2)
+    assert torch.allclose(unnormalized[TransitionKey.ACTION], torch.tensor([[0.5, 1.0]]))
+
+
+def test_routed_normalizer_roundtrips_saved_route_stats():
+    import tempfile
+
+    features = {
+        OBS_STATE: PolicyFeature(type=FeatureType.STATE, shape=(3,)),
+    }
+    norm_map = {FeatureType.STATE: NormalizationMode.MIN_MAX}
+    stats_by_route = {
+        0: {OBS_STATE: {"min": torch.zeros(3), "max": torch.ones(3)}},
+        1: {OBS_STATE: {"min": torch.ones(3) * 10, "max": torch.ones(3) * 20}},
+    }
+    route_feature_shapes = {0: {OBS_STATE: (2,)}, 1: {OBS_STATE: (3,)}}
+    pipeline = DataProcessorPipeline(
+        steps=[
+            RoutedNormalizerProcessorStep(
+                features=features,
+                norm_map=norm_map,
+                stats_by_route=stats_by_route,
+                route_feature_shapes=route_feature_shapes,
+            )
+        ],
+        name="routed_pipeline",
+    )
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        pipeline.save_pretrained(temp_dir)
+        loaded_pipeline = DataProcessorPipeline.from_pretrained(
+            temp_dir,
+            config_filename="routed_pipeline.json",
+        )
+
+    loaded_normalizer = loaded_pipeline.steps[0]
+    assert isinstance(loaded_normalizer, RoutedNormalizerProcessorStep)
+    assert sorted(loaded_normalizer.stats_by_route) == [0, 1]
+    assert loaded_normalizer.route_feature_shapes == route_feature_shapes
+
+    transition = create_transition(
+        observation={OBS_STATE: torch.tensor([[15.0, 10.0, 20.0]])},
+        complementary_data={"normalization_id": torch.tensor([1])},
+    )
+    normalized = loaded_normalizer(transition)
+    assert torch.allclose(
+        normalized[TransitionKey.OBSERVATION][OBS_STATE],
+        torch.tensor([[0.0, -1.0, 1.0]]),
+    )
 
 
 def test_scalar_conversion():
@@ -1804,13 +1969,15 @@ def test_stats_override_preservation_in_load_state_dict():
                 override_normalizer.stats[key][stat_name], original_stats[key][stat_name]
             ), f"Stats for {key}.{stat_name} should not match original stats"
 
-    # Verify that _tensor_stats are also correctly set to match the override stats
+    # Verify that _tensor_stats values match the override stats
+    # Note: visual stats are reshaped from (C,) to (C,1,1) by _reshape_visual_stats
     expected_tensor_stats = to_tensor(override_stats)
     for key in expected_tensor_stats:
         for stat_name in expected_tensor_stats[key]:
             if isinstance(expected_tensor_stats[key][stat_name], torch.Tensor):
                 torch.testing.assert_close(
-                    override_normalizer._tensor_stats[key][stat_name], expected_tensor_stats[key][stat_name]
+                    override_normalizer._tensor_stats[key][stat_name].squeeze(),
+                    expected_tensor_stats[key][stat_name].squeeze(),
                 )
 
 
@@ -1849,12 +2016,16 @@ def test_stats_without_override_loads_normally():
     # Stats should now match the original stats (normal behavior)
     # Check that all keys and values match
     assert set(new_normalizer.stats.keys()) == set(original_stats.keys())
+    # Note: visual stats are reshaped from (C,) to (C,1,1) by _reshape_visual_stats,
+    # so we squeeze before comparing values.
     for key in original_stats:
         assert set(new_normalizer.stats[key].keys()) == set(original_stats[key].keys())
         for stat_name in original_stats[key]:
-            np.testing.assert_allclose(
-                new_normalizer.stats[key][stat_name], original_stats[key][stat_name], rtol=1e-6, atol=1e-6
-            )
+            actual = new_normalizer.stats[key][stat_name]
+            expected = original_stats[key][stat_name]
+            if hasattr(actual, "squeeze"):
+                actual = actual.squeeze()
+            np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
 
 
 def test_stats_explicit_provided_flag_detection():
@@ -2075,8 +2246,9 @@ def test_stats_reconstruction_after_load_state_dict():
     assert ACTION in new_normalizer.stats
 
     # Check that values are correct (converted back from tensors)
-    np.testing.assert_allclose(new_normalizer.stats[OBS_IMAGE]["mean"], [0.5, 0.5, 0.5])
-    np.testing.assert_allclose(new_normalizer.stats[OBS_IMAGE]["std"], [0.2, 0.2, 0.2])
+    # Note: visual stats are reshaped to (C,1,1), so we squeeze before comparing
+    np.testing.assert_allclose(new_normalizer.stats[OBS_IMAGE]["mean"].squeeze(), [0.5, 0.5, 0.5])
+    np.testing.assert_allclose(new_normalizer.stats[OBS_IMAGE]["std"].squeeze(), [0.2, 0.2, 0.2])
     np.testing.assert_allclose(new_normalizer.stats[OBS_STATE]["min"], [0.0, -1.0])
     np.testing.assert_allclose(new_normalizer.stats[OBS_STATE]["max"], [1.0, 1.0])
     np.testing.assert_allclose(new_normalizer.stats[ACTION]["mean"], [0.0, 0.0])

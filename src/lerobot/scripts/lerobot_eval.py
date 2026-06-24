@@ -105,6 +105,7 @@ def rollout(
     seeds: list[int] | None = None,
     return_observations: bool = False,
     render_callback: Callable[[gym.vector.VectorEnv], None] | None = None,
+    complementary_inject: dict[str, Any] | None = None,
 ) -> dict:
     """Run a batched policy rollout once through a batch of environments.
 
@@ -134,6 +135,10 @@ def rollout(
             are returned optionally because they typically take more memory to cache. Defaults to False.
         render_callback: Optional rendering callback to be used after the environments are reset, and after
             every step.
+        complementary_inject: Optional dict of scalar values to broadcast into every observation
+            (e.g. ``{"normalization_id": 0, "embodiment_id": 31}``). These are merged into the
+            observation dict before the preprocessor runs, allowing routed normalizers to select
+            the correct per-dataset statistics.
     Returns:
         The dictionary described above.
     """
@@ -168,6 +173,14 @@ def rollout(
         if return_observations:
             all_observations.append(deepcopy(observation))
 
+        # Inject complementary data (e.g. normalization_id, embodiment_id) so that
+        # routed normalizers can select the correct per-dataset statistics.
+        # Must happen after preprocess_observation (which builds a new dict and would
+        # drop unrecognized keys) but before the preprocessor pipeline.
+        if complementary_inject:
+            for key, val in complementary_inject.items():
+                observation[key] = torch.tensor([val] * env.num_envs)
+
         # Infer "task" from sub-environments (prefer natural language description).
         # env.call() works with both SyncVectorEnv and AsyncVectorEnv.
         try:
@@ -184,7 +197,15 @@ def rollout(
         observation = preprocessor(observation)
         with torch.inference_mode():
             action = policy.select_action(observation)
-        action = postprocessor(action)
+
+        # Thread complementary data (e.g. normalization_id, embodiment_id) from the observation
+        # into the postprocessor pipeline. RoutedUnnormalizerProcessorStep needs this to select
+        # the correct per-dataset normalization statistics when unnormalizing actions.
+        comp_data = {}
+        for key in ("normalization_id", "embodiment_id"):
+            if key in observation:
+                comp_data[key] = observation[key]
+        action = postprocessor(action, complementary_data=comp_data or None)
 
         action_transition = {ACTION: action}
         action_transition = env_postprocessor(action_transition)
@@ -273,6 +294,7 @@ def eval_policy(
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
+    complementary_inject: dict[str, Any] | None = None,
 ) -> dict:
     """
     Args:
@@ -361,6 +383,7 @@ def eval_policy(
             seeds=list(seeds) if seeds else None,
             return_observations=return_episode_data,
             render_callback=render_frame if max_episodes_rendered > 0 else None,
+            complementary_inject=complementary_inject,
         )
 
         # Figure out where in each rollout sequence the first done condition was encountered (results after
@@ -414,11 +437,16 @@ def eval_policy(
                 videos_dir.mkdir(parents=True, exist_ok=True)
                 video_path = videos_dir / f"eval_episode_{n_episodes_rendered}.mp4"
                 video_paths.append(str(video_path))
+                n_video_frames = min(done_index + 2, stacked_frames.shape[0])
+                logging.info(
+                    f"Saving eval video {n_episodes_rendered}: {video_path} "
+                    f"({n_video_frames} frames, done_index={done_index})"
+                )
                 thread = threading.Thread(
                     target=write_video,
                     args=(
                         str(video_path),
-                        stacked_frames[: done_index + 1],  # + 1 to capture the last observation
+                        stacked_frames[: done_index + 2],  # + 2: reset frame + all steps through done
                         env.unwrapped.metadata["render_fps"],
                     ),
                 )
@@ -562,13 +590,16 @@ def eval_main(cfg: EvalPipelineConfig):
 
     # Create environment-specific preprocessor and postprocessor (e.g., for LIBERO environments)
     env_preprocessor, env_postprocessor = make_env_pre_post_processors(env_cfg=cfg.env, policy_cfg=cfg.policy)
+    # Wrap in per-suite dict for the new eval_policy_all signature
+    env_processors = {}
+    for suite in envs:
+        env_processors[suite] = (env_preprocessor, env_postprocessor)
 
     with torch.no_grad(), torch.autocast(device_type=device.type) if cfg.policy.use_amp else nullcontext():
         info = eval_policy_all(
             envs=envs,
             policy=policy,
-            env_preprocessor=env_preprocessor,
-            env_postprocessor=env_postprocessor,
+            env_processors=env_processors,
             preprocessor=preprocessor,
             postprocessor=postprocessor,
             n_episodes=cfg.eval.n_episodes,
@@ -576,6 +607,7 @@ def eval_main(cfg: EvalPipelineConfig):
             videos_dir=Path(cfg.output_dir) / "videos",
             start_seed=cfg.seed,
             max_parallel_tasks=cfg.env.max_parallel_tasks,
+            close_envs_after_eval=True,
         )
         print("Overall Aggregated Metrics:")
         print(info["overall"])
@@ -618,6 +650,7 @@ def eval_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    complementary_inject: dict[str, Any] | None = None,
 ) -> TaskMetrics:
     """Evaluates one task_id of one suite using the provided vec env."""
 
@@ -635,6 +668,7 @@ def eval_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        complementary_inject=complementary_inject,
     )
 
     per_episode = task_result["per_episode"]
@@ -661,6 +695,7 @@ def run_one(
     videos_dir: Path | None,
     return_episode_data: bool,
     start_seed: int | None,
+    complementary_inject: dict[str, Any] | None = None,
 ):
     """
     Run eval_one for a single (task_group, task_id, env).
@@ -685,6 +720,7 @@ def run_one(
         videos_dir=task_videos_dir,
         return_episode_data=return_episode_data,
         start_seed=start_seed,
+        complementary_inject=complementary_inject,
     )
     # ensure we always provide video_paths key to simplify accumulation
     if max_episodes_rendered > 0:
@@ -695,17 +731,20 @@ def run_one(
 def eval_policy_all(
     envs: dict[str, dict[int, gym.vector.VectorEnv]],
     policy,
-    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]],
-    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction],
-    n_episodes: int,
+    env_preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
+    env_postprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
     *,
+    env_processors: dict[str, tuple[Any, Any]] | None = None,
+    suite_metadata: dict[str, dict[str, Any]] | None = None,
+    preprocessor: PolicyProcessorPipeline[dict[str, Any], dict[str, Any]] | None = None,
+    postprocessor: PolicyProcessorPipeline[PolicyAction, PolicyAction] | None = None,
+    n_episodes: int,
     max_episodes_rendered: int = 0,
     videos_dir: Path | None = None,
     return_episode_data: bool = False,
     start_seed: int | None = None,
     max_parallel_tasks: int = 1,
+    close_envs_after_eval: bool = False,
 ) -> dict:
     """
     Evaluate a nested `envs` dict: {task_group: {task_id: vec_env}}.
@@ -713,6 +752,10 @@ def eval_policy_all(
     accumulates per-group and overall statistics, and returns the same aggregate metrics
     schema as the single-env evaluator (avg_sum_reward / avg_max_reward / pc_success / timings)
     plus per-task infos.
+
+    By default, envs remain open because callers such as training reuse the same eval envs
+    across checkpoints. Standalone eval can set close_envs_after_eval=True to release task envs
+    as soon as they finish.
     """
     start_t = time.time()
 
@@ -748,12 +791,21 @@ def eval_policy_all(
             group_acc[group]["video_paths"].extend(paths)
             overall["video_paths"].extend(paths)
 
+    # Resolve per-suite env processors and complementary metadata
+    def _resolve_processors(task_group: str):
+        if env_processors is not None and task_group in env_processors:
+            return env_processors[task_group]
+        return (env_preprocessor, env_postprocessor)
+
+    def _resolve_metadata(task_group: str) -> dict[str, Any] | None:
+        if suite_metadata is not None and task_group in suite_metadata:
+            return suite_metadata[task_group]
+        return None
+
     # Choose runner (sequential vs threaded)
     task_runner = partial(
         run_one,
         policy=policy,
-        env_preprocessor=env_preprocessor,
-        env_postprocessor=env_postprocessor,
         preprocessor=preprocessor,
         postprocessor=postprocessor,
         n_episodes=n_episodes,
@@ -770,15 +822,18 @@ def eval_policy_all(
                 prefetch_thread.join()
                 prefetch_thread = None
 
+            env_pre, env_post = _resolve_processors(task_group)
+            comp_inject = _resolve_metadata(task_group)
             try:
-                tg, tid, metrics = task_runner(task_group, task_id, env)
+                tg, tid, metrics = task_runner(task_group, task_id, env, env_preprocessor=env_pre, env_postprocessor=env_post, complementary_inject=comp_inject)
                 _accumulate_to(tg, metrics)
                 per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
             finally:
-                env.close()
-                # Prefetch next task's workers *after* closing current env to prevent
+                if close_envs_after_eval:
+                    env.close()
+                # Prefetch next task's workers *after* optionally closing current env to prevent
                 # GPU memory overlap between consecutive tasks.
-                if i + 1 < len(tasks):
+                if close_envs_after_eval and i + 1 < len(tasks):
                     next_env = tasks[i + 1][2]
                     if hasattr(next_env, "_ensure"):
                         prefetch_thread = threading.Thread(target=next_env._ensure, daemon=True)
@@ -787,7 +842,13 @@ def eval_policy_all(
         with cf.ThreadPoolExecutor(max_workers=max_parallel_tasks) as executor:
             fut2meta = {}
             for task_group, task_id, env in tasks:
-                fut = executor.submit(task_runner, task_group, task_id, env)
+                env_pre, env_post = _resolve_processors(task_group)
+                comp_inject = _resolve_metadata(task_group)
+                fut = executor.submit(
+                    task_runner, task_group, task_id, env,
+                    env_preprocessor=env_pre, env_postprocessor=env_post,
+                    complementary_inject=comp_inject,
+                )
                 fut2meta[fut] = (task_group, task_id, env)
             for fut in cf.as_completed(fut2meta):
                 tg, tid, env = fut2meta[fut]
@@ -796,7 +857,8 @@ def eval_policy_all(
                     _accumulate_to(tg, metrics)
                     per_task_infos.append({"task_group": tg, "task_id": tid, "metrics": metrics})
                 finally:
-                    env.close()
+                    if close_envs_after_eval:
+                        env.close()
 
     # compute aggregated metrics helper (robust to lists/scalars)
     def _agg_from_list(xs):

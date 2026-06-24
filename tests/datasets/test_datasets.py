@@ -47,6 +47,7 @@ from lerobot.datasets.video_utils import VALID_VIDEO_CODECS
 from lerobot.envs.factory import make_env_config
 from lerobot.policies.factory import make_policy_config
 from lerobot.robots import make_robot_from_config
+from lerobot.scripts.lerobot_train import make_dataset_weighted_sampler
 from lerobot.transforms import ImageTransforms, ImageTransformsConfig
 from lerobot.utils.constants import ACTION, DONE, OBS_IMAGES, OBS_STATE, OBS_STR, REWARD
 from lerobot.utils.feature_utils import hw_to_dataset_features
@@ -404,16 +405,227 @@ def test_multilerobot_dataset_set_image_transforms_propagates(tmp_path, lerobot_
     for repo_id in repo_ids:
         lerobot_dataset_factory(root=root / repo_id, repo_id=repo_id, use_videos=False)
 
-    dataset = MultiLeRobotDataset(repo_ids, root=root, download_videos=False)
+    dataset = MultiLeRobotDataset(repo_ids, root=root, download_videos=False, embodiment_ids=[30, 31])
     dataset.set_image_transforms(v2.Resize((96, 96)))
 
     camera_key = dataset.camera_keys[0]
     assert dataset[0][camera_key].shape == torch.Size((3, 96, 96))
+    assert dataset[0]["embodiment_id"].item() == 30
+    assert dataset[len(dataset._datasets[0])]["embodiment_id"].item() == 31
     assert all(child.image_transforms is dataset.image_transforms for child in dataset._datasets)
 
     dataset.clear_image_transforms()
     assert dataset.image_transforms is None
     assert all(child.image_transforms is None for child in dataset._datasets)
+
+
+def test_multilerobot_dataset_pads_heterogeneous_action_and_state_dims(
+    tmp_path, lerobot_dataset_factory, info_factory
+):
+    root = tmp_path / "multi"
+    repo_ids = ["lerobot/test_multi_small", "lerobot/test_multi_large"]
+
+    small_motor_features = {
+        ACTION: {"dtype": "float32", "shape": (2,), "names": ["x", "y"]},
+        OBS_STATE: {"dtype": "float32", "shape": (4,), "names": ["s0", "s1", "s2", "s3"]},
+        f"{OBS_STATE}.gripper_states": {
+            "dtype": "float32",
+            "shape": (2,),
+            "names": ["gripper_0", "gripper_1"],
+        },
+        "gripper_states": {
+            "dtype": "float64",
+            "shape": (2,),
+            "names": ["gripper_0", "gripper_1"],
+        },
+    }
+    large_motor_features = {
+        ACTION: {"dtype": "float32", "shape": (3,), "names": ["x", "y", "z"]},
+        OBS_STATE: {
+            "dtype": "float32",
+            "shape": (5,),
+            "names": ["s0", "s1", "s2", "s3", "s4"],
+        },
+        f"{OBS_STATE}.gripper_states": {
+            "dtype": "float32",
+            "shape": (4,),
+            "names": ["gripper_0", "gripper_1", "gripper_2", "gripper_3"],
+        },
+        "gripper_states": {
+            "dtype": "float64",
+            "shape": (4,),
+            "names": ["gripper_0", "gripper_1", "gripper_2", "gripper_3"],
+        },
+    }
+
+    for repo_id, motor_features in zip(repo_ids, [small_motor_features, large_motor_features], strict=True):
+        info = info_factory(
+            total_episodes=1,
+            total_frames=2,
+            total_tasks=1,
+            use_videos=False,
+            motor_features=motor_features,
+        )
+        lerobot_dataset_factory(root=root / repo_id, repo_id=repo_id, info=info, use_videos=False)
+
+    dataset = MultiLeRobotDataset(repo_ids, root=root, download_videos=False, normalization_ids=[0, 1])
+
+    assert dataset.meta.features[ACTION]["shape"] == (3,)
+    assert dataset.meta.features[OBS_STATE]["shape"] == (5,)
+    assert dataset.meta.features[f"{OBS_STATE}.gripper_states"]["shape"] == (4,)
+    assert dataset.meta.features["gripper_states"]["shape"] == (4,)
+    assert dataset.meta.feature_shapes_by_normalization_id[0][ACTION] == (2,)
+    assert dataset.meta.feature_shapes_by_normalization_id[0][OBS_STATE] == (4,)
+    assert dataset.meta.feature_shapes_by_normalization_id[0][f"{OBS_STATE}.gripper_states"] == (2,)
+    assert dataset.meta.feature_shapes_by_normalization_id[0]["gripper_states"] == (2,)
+    assert dataset.meta.feature_shapes_by_normalization_id[1][ACTION] == (3,)
+    assert dataset.meta.feature_shapes_by_normalization_id[1][OBS_STATE] == (5,)
+    assert dataset.meta.feature_shapes_by_normalization_id[1][f"{OBS_STATE}.gripper_states"] == (4,)
+    assert dataset.meta.feature_shapes_by_normalization_id[1]["gripper_states"] == (4,)
+
+    small_item = dataset[0]
+    large_item = dataset[len(dataset._datasets[0])]
+
+    assert small_item["normalization_id"].item() == 0
+    assert small_item[ACTION].shape[-1] == 3
+    assert small_item["action_dim_is_pad"].tolist() == [False, False, True]
+    assert small_item[ACTION][-1].item() == 0
+    assert large_item["normalization_id"].item() == 1
+    assert large_item["action_dim_is_pad"].tolist() == [False, False, False]
+
+    assert small_item[OBS_STATE].shape[-1] == 5
+    assert small_item[f"{OBS_STATE}_dim_is_pad"].tolist() == [False, False, False, False, True]
+    assert large_item[f"{OBS_STATE}_dim_is_pad"].tolist() == [False, False, False, False, False]
+
+    gripper_states_key = f"{OBS_STATE}.gripper_states"
+    assert small_item[gripper_states_key].shape[-1] == 4
+    assert small_item[f"{gripper_states_key}_dim_is_pad"].tolist() == [False, False, True, True]
+    assert large_item[f"{gripper_states_key}_dim_is_pad"].tolist() == [False, False, False, False]
+
+    assert small_item["gripper_states"].shape[-1] == 4
+    assert small_item["gripper_states_dim_is_pad"].tolist() == [False, False, True, True]
+    assert large_item["gripper_states_dim_is_pad"].tolist() == [False, False, False, False]
+
+
+def test_make_dataset_weighted_sampler_balances_dataset_mass():
+    class ChildDataset:
+        def __init__(self, num_frames):
+            self.num_frames = num_frames
+
+    class Dataset:
+        _datasets = [ChildDataset(2), ChildDataset(4)]
+
+        def __len__(self):
+            return sum(child.num_frames for child in self._datasets)
+
+    sampler = make_dataset_weighted_sampler(Dataset(), [1.0, 3.0])
+
+    assert len(sampler) == 6
+    assert torch.allclose(sampler.weights[:2], torch.full((2,), 0.5, dtype=torch.double))
+    assert torch.allclose(sampler.weights[2:], torch.full((4,), 0.75, dtype=torch.double))
+    assert sampler.weights[:2].sum().item() == pytest.approx(1.0)
+    assert sampler.weights[2:].sum().item() == pytest.approx(3.0)
+
+
+def test_multilerobot_dataset_normalizes_timestamp_dtype(tmp_path, lerobot_dataset_factory, info_factory):
+    root = tmp_path / "multi"
+    repo_ids = ["lerobot/test_multi_timestamp_f32", "lerobot/test_multi_timestamp_f64"]
+
+    for repo_id, timestamp_dtype in zip(repo_ids, ["float32", "float64"], strict=True):
+        info = info_factory(total_episodes=1, total_frames=2, total_tasks=1, use_videos=False)
+        info.features["timestamp"]["dtype"] = timestamp_dtype
+        lerobot_dataset_factory(root=root / repo_id, repo_id=repo_id, info=info, use_videos=False)
+
+    dataset = MultiLeRobotDataset(repo_ids, root=root, download_videos=False)
+
+    assert dataset.meta.features["timestamp"]["dtype"] == "float32"
+    assert dataset[0]["timestamp"].dtype == torch.float32
+    assert dataset[len(dataset._datasets[0])]["timestamp"].dtype == torch.float32
+
+
+def test_multilerobot_dataset_canonicalizes_image_keys(tmp_path, lerobot_dataset_factory, info_factory):
+    root = tmp_path / "multi"
+    dex_repo_id = "lerobot/test_multi_dex_images"
+    robocasa_repo_id = "lerobot/test_multi_robocasa_images"
+    dex_image_feature = {"shape": DUMMY_HWC, "names": ["height", "width", "channels"], "info": None}
+    robocasa_image_feature = {
+        "shape": (112, 144, 3),
+        "names": ["height", "width", "channels"],
+        "info": None,
+    }
+
+    dex_info = info_factory(
+        total_episodes=1,
+        total_frames=2,
+        total_tasks=1,
+        use_videos=False,
+        camera_features={
+            "observation.images.right_wrist_view": dex_image_feature,
+            "observation.images.left_wrist_view": dex_image_feature,
+            "observation.images.ego_view": dex_image_feature,
+        },
+    )
+    robocasa_info = info_factory(
+        total_episodes=1,
+        total_frames=2,
+        total_tasks=1,
+        use_videos=False,
+        camera_features={
+            "observation.images.robot0_eye_in_hand": robocasa_image_feature,
+            "observation.images.robot0_agentview_right": robocasa_image_feature,
+            "observation.images.robot0_agentview_left": robocasa_image_feature,
+        },
+    )
+    lerobot_dataset_factory(root=root / dex_repo_id, repo_id=dex_repo_id, info=dex_info, use_videos=False)
+    lerobot_dataset_factory(
+        root=root / robocasa_repo_id, repo_id=robocasa_repo_id, info=robocasa_info, use_videos=False
+    )
+
+    dataset = MultiLeRobotDataset([dex_repo_id, robocasa_repo_id], root=root, download_videos=False)
+    canonical_keys = {
+        "observation.images.right_wrist",
+        "observation.images.left_wrist",
+        "observation.images.external_one",
+    }
+
+    assert canonical_keys.issubset(set(dataset.meta.camera_keys))
+
+    dex_item = dataset[0]
+    robocasa_item = dataset[len(dataset._datasets[0])]
+
+    assert canonical_keys.issubset(dex_item)
+    assert canonical_keys.issubset(robocasa_item)
+    assert not dex_item["observation.images.left_wrist_is_pad"].item()
+    assert robocasa_item["observation.images.left_wrist_is_pad"].item()
+    assert torch.count_nonzero(robocasa_item["observation.images.left_wrist"]) == 0
+    assert set(dex_item) == set(robocasa_item)
+    assert (
+        dex_item["observation.images.right_wrist"].shape
+        == robocasa_item["observation.images.right_wrist"].shape
+    )
+
+    batch = torch.utils.data.default_collate([dex_item, robocasa_item])
+    assert batch["observation.images.right_wrist"].shape[0] == 2
+
+
+def test_multilerobot_factory_passes_tolerance_s(tmp_path, lerobot_dataset_factory):
+    root = tmp_path / "multi"
+    repo_ids = ["lerobot/test_multi_tolerance_a", "lerobot/test_multi_tolerance_b"]
+
+    for repo_id in repo_ids:
+        lerobot_dataset_factory(root=root / repo_id, repo_id=repo_id, use_videos=False)
+
+    cfg = TrainPipelineConfig(
+        dataset=DatasetConfig(repo_id=repo_ids, root=root),
+        env=make_env_config("pusht"),
+        policy=make_policy_config("diffusion"),
+        tolerance_s=1e-3,
+    )
+
+    dataset = make_dataset(cfg)
+
+    assert isinstance(dataset, MultiLeRobotDataset)
+    assert all(child.tolerance_s == pytest.approx(1e-3) for child in dataset._datasets)
 
 
 def test_image_array_to_pil_image_wrong_range_float_0_255():

@@ -16,6 +16,7 @@
 import logging
 import os
 import re
+from collections.abc import Sequence
 from glob import glob
 from pathlib import Path
 
@@ -24,6 +25,22 @@ from termcolor import colored
 
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.constants import PRETRAINED_MODEL_DIR
+
+
+def _is_scalar_wandb_value(value) -> bool:
+    return isinstance(value, int | float | str)
+
+
+def _flatten_wandb_log_values(key: str, value, mode: str) -> dict | None:
+    if _is_scalar_wandb_value(value):
+        return {f"{mode}/{key}": value}
+
+    if isinstance(value, Sequence) and not isinstance(value, str) and len(value) > 0 and all(
+        isinstance(item, int | float) for item in value
+    ):
+        return {f"{mode}/{key}/{i}": item for i, item in enumerate(value)}
+
+    return None
 
 
 def cfg_to_group(
@@ -50,9 +67,16 @@ def cfg_to_group(
         f"seed:{cfg.seed}",
     ]
     if cfg.dataset is not None:
-        lst.append(f"dataset:{cfg.dataset.repo_id}")
+        repo_ids = cfg.dataset.repo_id
+        if isinstance(repo_ids, list):
+            dataset_tag = f"dataset:multi_{len(repo_ids)}"
+        else:
+            dataset_tag = f"dataset:{repo_ids}"
+        lst.append(dataset_tag)
     if cfg.env is not None:
-        lst.append(f"env:{cfg.env.type}")
+        env_configs = cfg.eval_env_configs
+        env_tag = "+".join(ec.type for ec in env_configs)
+        lst.append(f"env:{env_tag}")
     if truncate_tags:
         lst = [_maybe_truncate(tag) for tag in lst]
     return lst if return_list else "-".join(lst)
@@ -71,8 +95,9 @@ def get_wandb_run_id_from_filesystem(log_dir: Path) -> str:
 
 
 def get_safe_wandb_artifact_name(name: str):
-    """WandB artifacts don't accept ":" or "/" in their name."""
-    return name.replace(":", "_").replace("/", "_")
+    """WandB artifacts only accept alphanumeric characters, dashes, underscores, and dots."""
+    name = name.replace(":", "_").replace("/", "_")
+    return re.sub(r"[^a-zA-Z0-9_.\-]", "_", name)
 
 
 class WandBLogger:
@@ -82,11 +107,20 @@ class WandBLogger:
         self.cfg = cfg.wandb
         self.log_dir = cfg.output_dir
         self.job_name = cfg.job_name
-        self.env_fps = cfg.env.fps if cfg.env else None
+        if cfg.env is not None:
+            env_configs = cfg.eval_env_configs
+            self.env_fps = env_configs[0].fps
+        else:
+            self.env_fps = None
         self._group = cfg_to_group(cfg)
 
         # Set up WandB.
         os.environ["WANDB_SILENT"] = "True"
+        # Ensure wandb data (artifact staging, etc.) lives in the output dir (scratch)
+        # rather than the default ~/.local/share/wandb which may fill up a small home quota.
+        wandb_data_dir = self.log_dir / ".wandb_data"
+        wandb_data_dir.mkdir(parents=True, exist_ok=True)
+        os.environ.setdefault("WANDB_DATA_DIR", str(wandb_data_dir))
         import wandb
 
         wandb_run_id = (
@@ -181,7 +215,8 @@ class WandBLogger:
                 self._wandb.define_metric(new_custom_key, hidden=True)
 
         for k, v in d.items():
-            if not isinstance(v, (int | float | str)):
+            data = _flatten_wandb_log_values(k, v, mode)
+            if data is None:
                 logging.warning(
                     f'WandB logging of key "{k}" was ignored as its type "{type(v)}" is not handled by this wrapper.'
                 )
@@ -193,15 +228,18 @@ class WandBLogger:
 
             if custom_step_key is not None:
                 value_custom_step = d[custom_step_key]
-                data = {f"{mode}/{k}": v, f"{mode}/{custom_step_key}": value_custom_step}
+                data[f"{mode}/{custom_step_key}"] = value_custom_step
                 self._wandb.log(data)
                 continue
 
-            self._wandb.log(data={f"{mode}/{k}": v}, step=step)
+            self._wandb.log(data=data, step=step)
 
-    def log_video(self, video_path: str, step: int, mode: str = "train"):
+    def log_video(self, video_path: str | list[str], step: int, mode: str = "train"):
         if mode not in {"train", "eval"}:
             raise ValueError(mode)
 
-        wandb_video = self._wandb.Video(video_path, fps=self.env_fps, format="mp4")
-        self._wandb.log({f"{mode}/video": wandb_video}, step=step)
+        if isinstance(video_path, str):
+            video_path = [video_path]
+
+        videos = {f"{mode}/video_{i}": self._wandb.Video(path, fps=self.env_fps, format="mp4") for i, path in enumerate(video_path)}
+        self._wandb.log(videos, step=step)

@@ -76,7 +76,7 @@ def _migrate_legacy_rabc_fields(config: dict[str, Any]) -> dict[str, Any] | None
 @dataclass
 class TrainPipelineConfig(HubMixin):
     dataset: DatasetConfig
-    env: envs.EnvConfig | None = None
+    env: envs.EnvConfig | list[envs.EnvConfig] | None = None
     policy: PreTrainedConfig | None = None
     reward_model: RewardModelConfig | None = None
     # Set `dir` to where you would like to save all of the run outputs. If you run another training session
@@ -118,6 +118,9 @@ class TrainPipelineConfig(HubMixin):
 
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
+    # Per-suite complementary data injected during eval (e.g. normalization_id, embodiment_id).
+    # Keyed by suite name as produced by make_env(), or by the disambiguated key when duplicates exist.
+    suite_metadata: dict[str, dict[str, Any]] | None = None
     checkpoint_path: Path | None = field(init=False, default=None)
 
     @property
@@ -131,6 +134,15 @@ class TrainPipelineConfig(HubMixin):
         if self.is_reward_model_training:
             return self.reward_model  # type: ignore[return-value]
         return self.policy  # type: ignore[return-value]
+
+    @property
+    def eval_env_configs(self) -> list[envs.EnvConfig]:
+        """Normalize ``env`` to a list. Returns [] when env is None."""
+        if self.env is None:
+            return []
+        if isinstance(self.env, list):
+            return self.env
+        return [self.env]
 
     def validate(self) -> None:
         # HACK: We parse again the cli args here to get the pretrained paths if there was some.
@@ -178,7 +190,9 @@ class TrainPipelineConfig(HubMixin):
             if self.env is None:
                 self.job_name = f"{active_cfg.type}"
             else:
-                self.job_name = f"{self.env.type}_{active_cfg.type}"
+                env_configs = self.eval_env_configs
+                env_tag = "_".join(ec.type for ec in env_configs)
+                self.job_name = f"{env_tag}_{active_cfg.type}"
 
         if not self.resume and isinstance(self.output_dir, Path) and self.output_dir.is_dir():
             raise FileExistsError(
@@ -191,7 +205,41 @@ class TrainPipelineConfig(HubMixin):
             self.output_dir = Path("outputs/train") / train_dir
 
         if isinstance(self.dataset.repo_id, list):
-            raise NotImplementedError("LeRobotMultiDataset is not currently implemented.")
+            if self.dataset.streaming:
+                raise NotImplementedError("Streaming multi-dataset training is not currently implemented.")
+            if self.dataset.episodes is not None:
+                raise NotImplementedError(
+                    "Selecting episodes with a list of datasets is not currently implemented."
+                )
+            if self.dataset.embodiment_ids is not None and len(self.dataset.embodiment_ids) != len(
+                self.dataset.repo_id
+            ):
+                raise ValueError(
+                    "dataset.embodiment_ids must have one entry per dataset repo_id, got "
+                    f"{len(self.dataset.embodiment_ids)} ids for {len(self.dataset.repo_id)} datasets."
+                )
+            if self.dataset.normalization_ids is not None and len(self.dataset.normalization_ids) != len(
+                self.dataset.repo_id
+            ):
+                raise ValueError(
+                    "dataset.normalization_ids must have one entry per dataset repo_id, got "
+                    f"{len(self.dataset.normalization_ids)} ids for {len(self.dataset.repo_id)} datasets."
+                )
+            if self.dataset.sampling_weights is not None:
+                if len(self.dataset.sampling_weights) != len(self.dataset.repo_id):
+                    raise ValueError(
+                        "dataset.sampling_weights must have one entry per dataset repo_id, got "
+                        f"{len(self.dataset.sampling_weights)} weights for {len(self.dataset.repo_id)} datasets."
+                    )
+                if any(weight < 0 for weight in self.dataset.sampling_weights):
+                    raise ValueError("dataset.sampling_weights must be non-negative.")
+                if sum(self.dataset.sampling_weights) <= 0:
+                    raise ValueError("At least one dataset.sampling_weights entry must be positive.")
+        elif self.dataset.normalization_ids is not None or self.dataset.sampling_weights is not None:
+            raise ValueError(
+                "dataset.normalization_ids and dataset.sampling_weights are only supported when "
+                "dataset.repo_id is a list."
+            )
 
         if not self.use_policy_training_preset and (self.optimizer is None or self.scheduler is None):
             raise ValueError("Optimizer and Scheduler must be set when the policy presets are not used.")
@@ -267,10 +315,3 @@ class TrainPipelineConfig(HubMixin):
 
         with draccus.config_type("json"):
             return draccus.parse(cls, config_file, args=cli_args)
-
-
-@dataclass(kw_only=True)
-class TrainRLServerPipelineConfig(TrainPipelineConfig):
-    # NOTE: In RL, we don't need an offline dataset
-    # TODO: Make `TrainPipelineConfig.dataset` optional
-    dataset: DatasetConfig | None = None  # type: ignore[assignment] # because the parent class has made it's type non-optional
