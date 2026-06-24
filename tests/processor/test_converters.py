@@ -221,6 +221,9 @@ def test_batch_to_transition_with_index_fields():
         DONE: False,
         "task": ["pick_cube"],
         "index": torch.tensor([42], dtype=torch.int64),
+        "dataset_index": torch.tensor([1], dtype=torch.int64),
+        "embodiment_id": torch.tensor([30], dtype=torch.int64),
+        "normalization_id": torch.tensor([2], dtype=torch.int64),
         "task_index": torch.tensor([3], dtype=torch.int64),
     }
 
@@ -234,11 +237,17 @@ def test_batch_to_transition_with_index_fields():
     # Check that index and task_index are in complementary_data
     comp_data = transition[TransitionKey.COMPLEMENTARY_DATA]
     assert "index" in comp_data
+    assert "dataset_index" in comp_data
+    assert "embodiment_id" in comp_data
+    assert "normalization_id" in comp_data
     assert "task_index" in comp_data
     assert "task" in comp_data
 
     # Verify values
     assert torch.equal(comp_data["index"], batch["index"])
+    assert torch.equal(comp_data["dataset_index"], batch["dataset_index"])
+    assert torch.equal(comp_data["embodiment_id"], batch["embodiment_id"])
+    assert torch.equal(comp_data["normalization_id"], batch["normalization_id"])
     assert torch.equal(comp_data["task_index"], batch["task_index"])
     assert comp_data["task"] == batch["task"]
 
@@ -255,6 +264,9 @@ def testtransition_to_batch_with_index_fields():
         complementary_data={
             "task": ["navigate"],
             "index": torch.tensor([100], dtype=torch.int64),
+            "dataset_index": torch.tensor([2], dtype=torch.int64),
+            "embodiment_id": torch.tensor([31], dtype=torch.int64),
+            "normalization_id": torch.tensor([4], dtype=torch.int64),
             "task_index": torch.tensor([5], dtype=torch.int64),
         },
     )
@@ -263,11 +275,19 @@ def testtransition_to_batch_with_index_fields():
 
     # Check that index and task_index are in the batch
     assert "index" in batch
+    assert "dataset_index" in batch
+    assert "embodiment_id" in batch
+    assert "normalization_id" in batch
     assert "task_index" in batch
     assert "task" in batch
 
     # Verify values
     assert torch.equal(batch["index"], transition[TransitionKey.COMPLEMENTARY_DATA]["index"])
+    assert torch.equal(batch["dataset_index"], transition[TransitionKey.COMPLEMENTARY_DATA]["dataset_index"])
+    assert torch.equal(batch["embodiment_id"], transition[TransitionKey.COMPLEMENTARY_DATA]["embodiment_id"])
+    assert torch.equal(
+        batch["normalization_id"], transition[TransitionKey.COMPLEMENTARY_DATA]["normalization_id"]
+    )
     assert torch.equal(batch["task_index"], transition[TransitionKey.COMPLEMENTARY_DATA]["task_index"])
     assert batch["task"] == transition[TransitionKey.COMPLEMENTARY_DATA]["task"]
 

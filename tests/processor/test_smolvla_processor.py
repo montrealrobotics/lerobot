@@ -22,7 +22,10 @@ import torch
 
 from lerobot.configs.types import FeatureType, NormalizationMode, PipelineFeatureType, PolicyFeature
 from lerobot.policies.smolvla.configuration_smolvla import SmolVLAConfig
-from lerobot.policies.smolvla.processor_smolvla import make_smolvla_pre_post_processors
+from lerobot.policies.smolvla.processor_smolvla import (
+    SmolVLARandomExternalCameraProcessorStep,
+    make_smolvla_pre_post_processors,
+)
 from lerobot.processor import (
     AddBatchDimensionProcessorStep,
     DeviceProcessorStep,
@@ -31,6 +34,8 @@ from lerobot.processor import (
     NormalizerProcessorStep,
     ProcessorStep,
     RenameObservationsProcessorStep,
+    RoutedNormalizerProcessorStep,
+    RoutedUnnormalizerProcessorStep,
     TransitionKey,
     UnnormalizerProcessorStep,
 )
@@ -115,6 +120,88 @@ def test_make_smolvla_processor_basic():
     assert len(postprocessor.steps) == 2
     assert isinstance(postprocessor.steps[0], UnnormalizerProcessorStep)
     assert isinstance(postprocessor.steps[1], DeviceProcessorStep)
+
+
+def test_make_smolvla_processor_with_routed_stats():
+    """Test SmolVLA processor uses routed normalization stats when provided."""
+    config = create_default_config()
+    route_stats = {
+        0: create_default_stats(),
+        1: {
+            OBS_STATE: {"mean": torch.full((8,), 10.0), "std": torch.full((8,), 2.0)},
+            OBS_IMAGE: {},
+            ACTION: {"min": torch.full((7,), -10.0), "max": torch.full((7,), 10.0)},
+        },
+    }
+
+    with patch(
+        "lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep", MockTokenizerProcessorStep
+    ):
+        preprocessor, postprocessor = make_smolvla_pre_post_processors(
+            config,
+            dataset_stats=create_default_stats(),
+            dataset_stats_by_route=route_stats,
+            route_feature_shapes={1: {ACTION: (7,)}},
+        )
+
+    assert isinstance(preprocessor.steps[5], RoutedNormalizerProcessorStep)
+    assert isinstance(postprocessor.steps[0], RoutedUnnormalizerProcessorStep)
+
+    observation = {
+        OBS_STATE: torch.full((8,), 20.0),
+        OBS_IMAGE: torch.randn(3, 224, 224),
+    }
+    action = torch.zeros(7)
+    transition = create_transition(
+        observation,
+        action,
+        complementary_data={"task": "test task", "normalization_id": torch.tensor(1)},
+    )
+
+    processed = preprocessor(transition_to_batch(transition))
+    assert torch.allclose(processed[OBS_STATE], torch.full((1, 8), 5.0))
+
+    unnormalized = postprocessor(torch.zeros(1, 7), complementary_data={"normalization_id": torch.tensor(1)})
+    assert torch.allclose(unnormalized, torch.zeros(1, 7))
+
+
+def test_smolvla_random_external_camera_processor_selects_output_key():
+    """Test SmolVLA random external camera step exposes selected camera under the canonical key."""
+    processor = SmolVLARandomExternalCameraProcessorStep(
+        camera_keys=["observation.images.left", "observation.images.right"],
+        output_key=OBS_IMAGE,
+        p_first_camera=1.0,
+    )
+
+    left = torch.ones(2, 3, 4, 4)
+    right = torch.zeros(2, 3, 4, 4)
+    transition = create_transition(
+        observation={
+            "observation.images.left": left,
+            "observation.images.right": right,
+            OBS_IMAGE: right,
+        }
+    )
+
+    result = processor(transition)
+
+    assert torch.equal(result[TransitionKey.OBSERVATION][OBS_IMAGE], left)
+
+
+def test_make_smolvla_processor_with_random_external_camera_step():
+    """Test SmolVLA inserts random external camera selection before batching."""
+    config = create_default_config()
+    config.random_external_camera_keys = ["observation.images.left", "observation.images.right"]
+    config.random_external_camera_output_key = OBS_IMAGE
+
+    with patch(
+        "lerobot.policies.smolvla.processor_smolvla.TokenizerProcessorStep", MockTokenizerProcessorStep
+    ):
+        preprocessor, _ = make_smolvla_pre_post_processors(config, create_default_stats())
+
+    assert len(preprocessor.steps) == 7
+    assert isinstance(preprocessor.steps[1], SmolVLARandomExternalCameraProcessorStep)
+    assert isinstance(preprocessor.steps[2], AddBatchDimensionProcessorStep)
 
 
 def test_smolvla_newline_processor_single_task():
