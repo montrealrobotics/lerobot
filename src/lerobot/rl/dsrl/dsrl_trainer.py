@@ -15,6 +15,7 @@ from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.dsrl.dsrl_config import DSRLConfig
 from lerobot.rl.dsrl.dsrl_env_wrapper import DSRLEnvWrapper
+from lerobot.rl.dsrl.env_utils import DSRL_ACTION_CHUNK_STEPS
 from lerobot.rl.dsrl.noise_actor import (
     LightweightNoiseActorPolicy,
     NoiseActorPolicy,
@@ -156,16 +157,19 @@ def train_dsrl(
     # Track rolling episode stats for WandB / console
     recent_returns: deque[float] = deque(maxlen=10)
 
-    print(f"Starting DSRL training for {total_steps} steps (noise_dim={noise_dim})")
+    print(f"Starting DSRL training for {total_steps} environment steps (noise_dim={noise_dim})")
 
-    for env_step in range(total_steps):
+    env_step = 0
+    while env_step < total_steps:
         policy_obs = obs_to_policy_obs(obs)
         with torch.no_grad():
             noise_tensor = noise_actor.select_action(policy_obs)
         noise_np = noise_tensor.squeeze(0).cpu().numpy()
 
-        next_obs, reward, done, truncated, _ = dsrl_env.step(noise_np)
+        next_obs, reward, done, truncated, info = dsrl_env.step(noise_np)
         next_policy_obs = obs_to_policy_obs(next_obs)
+        primitive_steps = int(info.get(DSRL_ACTION_CHUNK_STEPS, 1))
+        env_step += primitive_steps
 
         buffer.add(
             state=policy_obs,
@@ -178,7 +182,7 @@ def train_dsrl(
 
         obs = next_obs
         episode_reward += reward
-        episode_steps += 1
+        episode_steps += primitive_steps
 
         if done or truncated:
             episode_count += 1
@@ -228,16 +232,19 @@ def train_dsrl(
                 )
 
         # Periodic evaluation
-        if eval_fn is not None and dsrl_cfg.eval_freq > 0 and env_step > 0 and env_step % dsrl_cfg.eval_freq == 0:
+        if (
+            eval_fn is not None
+            and dsrl_cfg.eval_freq > 0
+            and env_step > 0
+            and env_step % dsrl_cfg.eval_freq < primitive_steps
+        ):
             eval_metrics = eval_fn(noise_actor, env_step)
             if wandb_run is not None:
                 wandb_run.log({f"eval/{k}": v for k, v in eval_metrics.items()}, step=env_step)
-            print(
-                f"[eval @ step {env_step}] " + " ".join(f"{k}={v:.3f}" for k, v in eval_metrics.items())
-            )
+            print(f"[eval @ step {env_step}] " + " ".join(f"{k}={v:.3f}" for k, v in eval_metrics.items()))
 
         # Save checkpoint
-        if env_step > 0 and env_step % dsrl_cfg.save_freq == 0:
+        if env_step > 0 and env_step % dsrl_cfg.save_freq < primitive_steps:
             ckpt_dir = output_dir / f"step_{env_step}"
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             noise_actor.save_pretrained(ckpt_dir)

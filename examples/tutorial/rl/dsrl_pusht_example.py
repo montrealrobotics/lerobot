@@ -27,15 +27,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 import torch
 
 from lerobot.envs.configs import PushtEnv
+from lerobot.envs.utils import preprocess_observation
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.rl.dsrl import train_dsrl
 from lerobot.rl.dsrl.dsrl_config import DSRLConfig
 from lerobot.rl.dsrl.noise_actor import NoiseActorPolicy
+from lerobot.utils.io_utils import write_video
 
 
 def _make_single_env(env_cfg):
@@ -54,10 +57,13 @@ def make_pusht_eval_fn(
     obs_to_policy_obs,
     obs_to_frozen_obs,
     noise_reshape_fn,
+    action_postprocess_fn,
     device: torch.device,
     num_episodes: int = 10,
     record_video: bool = True,
-    video_max_steps: int = 200,
+    num_videos: int = 3,
+    video_fps: int = 10,
+    video_dir: str | Path | None = None,
 ):
     from collections import deque
 
@@ -69,89 +75,133 @@ def make_pusht_eval_fn(
 
         total_return = 0.0
         total_steps = 0
+        total_max_coverage = 0.0
         successes = 0
         episode_frames = []
 
-        for _ in range(num_episodes):
+        for episode_idx in range(num_episodes):
             obs, _ = eval_env.reset()
             frozen_policy.reset()
             episode_return = 0.0
             episode_steps = 0
             frames = []
+            episode_success = False
+            max_coverage = 0.0
+            should_record_video = record_video and episode_idx < num_videos
+            if should_record_video:
+                frames.append(obs["pixels"].copy())
 
-            obs_history: deque[dict[str, torch.Tensor]] = deque(maxlen=n_obs_steps)
+            obs_window: deque[dict[str, torch.Tensor]] = deque(maxlen=n_obs_steps)
             init_obs = obs_to_frozen_obs(obs)
             for _ in range(n_obs_steps):
-                obs_history.append(init_obs)
+                obs_window.append(init_obs)
 
             while True:
-                if record_video and episode_steps < video_max_steps:
-                    frames.append(obs["pixels"].copy())
-
                 policy_obs = obs_to_policy_obs(obs)
                 with torch.no_grad():
                     noise = noise_actor.select_action(policy_obs)
                 noise_np = noise.squeeze(0).cpu().numpy()
 
-                frozen_obs_single = obs_to_frozen_obs(obs)
-                obs_history.append(frozen_obs_single)
-                stacked_obs = {k: torch.stack([h[k] for h in obs_history], dim=1) for k in obs_history[0]}
+                stacked_obs = {k: torch.stack([h[k] for h in obs_window], dim=1) for k in obs_window[0]}
 
                 noise_tensor = noise_reshape_fn(noise_np, device)
                 gen_batch = dict(stacked_obs)
                 img_keys = list(frozen_policy.config.image_features)
                 if img_keys:
-                    gen_batch["observation.images"] = torch.stack(
-                        [gen_batch[k] for k in img_keys], dim=-4
-                    )
+                    gen_batch["observation.images"] = torch.stack([gen_batch[k] for k in img_keys], dim=-4)
                 with torch.no_grad():
                     action_chunk = frozen_policy.diffusion.generate_actions(gen_batch, noise=noise_tensor)
-                action_np = action_chunk[:, 0, :].squeeze(0).cpu().numpy()
+                action_chunk = action_postprocess_fn(action_chunk)
 
-                obs, reward, terminated, truncated, _ = eval_env.step(action_np)
-                done = bool(terminated) or bool(truncated)
-                episode_return += float(reward)
-                episode_steps += 1
+                done = False
+                for action_np in action_chunk.squeeze(0).cpu().numpy():
+                    obs, reward, terminated, truncated, info = eval_env.step(action_np)
+                    episode_return += float(reward)
+                    episode_steps += 1
+                    episode_success = episode_success or bool(info.get("is_success", False))
+                    max_coverage = max(max_coverage, float(info.get("coverage", 0.0)))
+                    done = bool(terminated) or bool(truncated) or episode_success
+
+                    if should_record_video:
+                        frames.append(obs["pixels"].copy())
+
+                    obs_window.append(obs_to_frozen_obs(obs))
+
+                    if done:
+                        break
 
                 if done:
                     total_return += episode_return
                     total_steps += episode_steps
-                    successes += 1 if episode_return > 0 else 0
+                    total_max_coverage += max_coverage
+                    successes += int(episode_success)
                     break
 
             if frames:
-                episode_frames.append((frames, episode_return))
+                episode_frames.append((frames, episode_return, episode_success, max_coverage))
 
         eval_env.close()
         noise_actor.train()
 
         if record_video and episode_frames:
-            _log_eval_video(episode_frames, step)
+            _log_eval_videos(
+                episode_frames,
+                step,
+                fps=video_fps,
+                video_dir=Path(video_dir)
+                if video_dir is not None
+                else Path("outputs/dsrl_pusht/eval_videos"),
+            )
 
         n = max(num_episodes, 1)
         return {
             "avg_return": total_return / n,
             "success_rate": successes / n,
             "avg_length": total_steps / n,
+            "avg_max_coverage": total_max_coverage / n,
         }
 
     return eval_fn
 
 
-def _log_eval_video(episode_frames: list[tuple[list, float]], step: int):
+def _log_eval_videos(
+    episode_frames: list[tuple[list, float, bool, float]], step: int, fps: int, video_dir: Path
+):
     try:
         import wandb
     except ImportError:
         return
     if wandb.run is None:
         return
-    best_frames, best_return = max(episode_frames, key=lambda x: x[1])
-    video = np.stack(best_frames).transpose(0, 3, 1, 2)
-    wandb.log({"eval/video": wandb.Video(video, fps=10, format="mp4")}, step=step)
-    print(f"[eval video @ step {step}] logged best episode (return={best_return:.2f}, frames={len(best_frames)})")
+
+    video_dir.mkdir(parents=True, exist_ok=True)
+    log_data = {}
+    logged_videos = 0
+    for i, (frames, episode_return, episode_success, max_coverage) in enumerate(episode_frames):
+        if not frames:
+            continue
+        video_path = video_dir / f"eval_step_{step:08d}_episode_{i:02d}.mp4"
+        try:
+            write_video(video_path, frames, fps=fps)
+        except ImportError as exc:
+            print(f"[eval video] {exc}; skipping video logging.")
+            return
+        except Exception as exc:
+            print(f"[eval video] failed to save {video_path}: {type(exc).__name__}: {exc}")
+            continue
+        log_data[f"eval/video_{i}"] = wandb.Video(str(video_path), fps=fps, format="mp4")
+        log_data[f"eval/video_{i}_return"] = float(episode_return)
+        log_data[f"eval/video_{i}_success"] = float(episode_success)
+        log_data[f"eval/video_{i}_max_coverage"] = float(max_coverage)
+        logged_videos += 1
+
+    if log_data:
+        wandb.log(log_data, step=step)
+
+    print(f"[eval video @ step {step}] logged first {logged_videos} eval videos")
 
 
-def make_pusht_obs_to_policy_obs(device: torch.device):
+def make_pusht_obs_to_policy_obs(device: torch.device, policy_preprocess_fn=None):
     """PushT raw env obs → policy-format dict.
 
     PushT env returns ``{"pixels": (H,W,3), "agent_pos": (2,)}``,
@@ -159,20 +209,10 @@ def make_pusht_obs_to_policy_obs(device: torch.device):
     """
 
     def obs_to_policy_obs(obs: dict) -> dict[str, torch.Tensor]:
-        out: dict[str, torch.Tensor] = {}
-
-        if "agent_pos" in obs:
-            out["observation.state"] = (
-                torch.from_numpy(obs["agent_pos"]).float().unsqueeze(0).to(device)
-            )
-
-        if "pixels" in obs:
-            img = obs["pixels"]
-            out["observation.image"] = (
-                torch.from_numpy(img).float().permute(2, 0, 1).unsqueeze(0).to(device)
-            )
-
-        return out
+        policy_obs = preprocess_observation(obs)
+        if policy_preprocess_fn is not None:
+            return policy_preprocess_fn(policy_obs)
+        return {key: value.to(device) for key, value in policy_obs.items()}
 
     return obs_to_policy_obs
 
@@ -187,10 +227,49 @@ def make_pusht_noise_reshape_fn(horizon: int, action_dim: int):
     return reshape_noise
 
 
+def make_policy_processor_fns(frozen_policy: DiffusionPolicy, policy_path: str, device: torch.device):
+    """Load saved policy processors when available."""
+    try:
+        from lerobot.policies.factory import make_pre_post_processors
+
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg=frozen_policy.config,
+            pretrained_path=policy_path,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+        )
+    except Exception as exc:
+        print(
+            "Warning: could not load policy processors; observations/actions will use only the "
+            f"manual PushT conversion. ({type(exc).__name__}: {exc})"
+        )
+
+        def preprocess(policy_obs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+            return {key: value.to(device) for key, value in policy_obs.items()}
+
+        def identity(action_chunk: torch.Tensor) -> torch.Tensor:
+            return action_chunk
+
+        return preprocess, identity
+
+    def preprocess(policy_obs: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+        return preprocessor.process_observation(policy_obs)
+
+    def postprocess(action_chunk: torch.Tensor) -> torch.Tensor:
+        batch_size, chunk_size, action_dim = action_chunk.shape
+        flat_actions = action_chunk.reshape(batch_size * chunk_size, action_dim)
+        flat_actions = postprocessor(flat_actions)
+        return flat_actions.reshape(batch_size, chunk_size, action_dim)
+
+    print("Loaded policy processors for observation normalization and action unnormalization.")
+    return preprocess, postprocess
+
+
 def main():
     parser = argparse.ArgumentParser(description="DSRL with diffusion policy on PushT")
     parser.add_argument(
-        "--policy_path", type=str, required=True,
+        "--policy_path",
+        type=str,
+        required=True,
         help="Path to trained diffusion policy (local dir or HF repo id)",
     )
     parser.add_argument("--total_steps", type=int, default=100_000, help="Total environment steps")
@@ -200,7 +279,9 @@ def main():
     parser.add_argument("--log_freq", type=int, default=100, help="Log training stats every N SAC updates")
     parser.add_argument("--save_freq", type=int, default=10_000, help="Save checkpoint every N env steps")
     # DSRL config
-    parser.add_argument("--dsrl_image_resize", type=int, default=64, help="Resize images for compact encoder (0=no compact)")
+    parser.add_argument(
+        "--dsrl_image_resize", type=int, default=64, help="Resize images for compact encoder (0=no compact)"
+    )
     parser.add_argument("--dsrl_image_latent", type=int, default=64)
     parser.add_argument("--dsrl_state_latent", type=int, default=64)
     parser.add_argument("--dsrl_num_q", type=int, default=10, help="Number of Q-networks")
@@ -211,6 +292,7 @@ def main():
     # Eval
     parser.add_argument("--eval_freq", type=int, default=5_000, help="Run eval every N env steps (0=off)")
     parser.add_argument("--eval_episodes", type=int, default=10, help="Episodes per eval")
+    parser.add_argument("--eval_videos", type=int, default=3, help="Log videos for the first N eval episodes")
     args = parser.parse_args()
 
     device = torch.device(args.device)
@@ -224,12 +306,17 @@ def main():
     action_dim = frozen_policy.config.action_feature.shape[0]
     n_obs_steps = frozen_policy.config.n_obs_steps
     noise_dim = horizon * action_dim
-    print(f"Diffusion policy: horizon={horizon}, action_dim={action_dim}, "
-          f"n_obs_steps={n_obs_steps}, noise_dim={noise_dim}")
+    print(
+        f"Diffusion policy: horizon={horizon}, action_dim={action_dim}, "
+        f"n_obs_steps={n_obs_steps}, noise_dim={noise_dim}"
+    )
 
     env = _make_single_env(PushtEnv())
 
-    obs_to_policy_obs = make_pusht_obs_to_policy_obs(device)
+    policy_preprocess_fn, action_postprocess_fn = make_policy_processor_fns(
+        frozen_policy, args.policy_path, device
+    )
+    obs_to_policy_obs = make_pusht_obs_to_policy_obs(device, policy_preprocess_fn=policy_preprocess_fn)
     obs_to_frozen_obs = obs_to_policy_obs
     noise_reshape_fn = make_pusht_noise_reshape_fn(horizon, action_dim)
 
@@ -239,7 +326,8 @@ def main():
         batch = dict(stacked_obs)
         if image_keys:
             batch["observation.images"] = torch.stack([batch[k] for k in image_keys], dim=-4)
-        return frozen_policy.diffusion.generate_actions(batch, noise=noise)
+        action_chunk = frozen_policy.diffusion.generate_actions(batch, noise=noise)
+        return action_postprocess_fn(action_chunk)
 
     wandb_kwargs = None
     if args.wandb_enable:
@@ -257,8 +345,12 @@ def main():
             obs_to_policy_obs=obs_to_policy_obs,
             obs_to_frozen_obs=obs_to_frozen_obs,
             noise_reshape_fn=noise_reshape_fn,
+            action_postprocess_fn=action_postprocess_fn,
             device=device,
             num_episodes=args.eval_episodes,
+            num_videos=args.eval_videos,
+            video_fps=PushtEnv().fps,
+            video_dir=Path(args.output_dir) / "eval_videos",
         )
 
     dsrl_cfg = DSRLConfig(
