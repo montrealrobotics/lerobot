@@ -27,6 +27,8 @@ import numpy as np
 
 DSRL_ACTION_CHUNK_STEPS = "dsrl_action_chunk_steps"
 DSRL_ACTION_CHUNK_INTERRUPTED = "dsrl_action_chunk_interrupted"
+DSRL_ACTION_CHUNK_RAW_REWARD = "dsrl_action_chunk_raw_reward"
+DSRL_ACTION_CHUNK_SHAPED_REWARD = "dsrl_action_chunk_shaped_reward"
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ def step_action_chunk(
     env: gym.Env,
     action_chunk: np.ndarray,
     after_step: Callable[[Any], None] | None = None,
+    reward_fn: Callable[[float, bool, bool, dict], float] | None = None,
 ) -> ActionChunkStepResult:
     """Execute a primitive-action chunk as one macro environment step."""
     if action_chunk.ndim != 2:
@@ -51,7 +54,8 @@ def step_action_chunk(
     if action_chunk.shape[0] == 0:
         raise ValueError("action_chunk must contain at least one primitive action")
 
-    reward_sum = 0.0
+    raw_reward_sum = 0.0
+    shaped_reward_sum = 0.0
     terminated = False
     truncated = False
     info = {}
@@ -60,7 +64,14 @@ def step_action_chunk(
 
     for action in action_chunk:
         obs, reward, terminated, truncated, info = env.step(action)
-        reward_sum += float(reward)
+        raw_reward = float(reward)
+        shaped_reward = (
+            float(reward_fn(raw_reward, bool(terminated), bool(truncated), info))
+            if reward_fn is not None
+            else raw_reward
+        )
+        raw_reward_sum += raw_reward
+        shaped_reward_sum += shaped_reward
         executed_steps += 1
         if after_step is not None:
             after_step(obs)
@@ -71,10 +82,12 @@ def step_action_chunk(
     info = dict(info)
     info[DSRL_ACTION_CHUNK_STEPS] = executed_steps
     info[DSRL_ACTION_CHUNK_INTERRUPTED] = executed_steps < action_chunk.shape[0]
+    info[DSRL_ACTION_CHUNK_RAW_REWARD] = raw_reward_sum
+    info[DSRL_ACTION_CHUNK_SHAPED_REWARD] = shaped_reward_sum
 
     return ActionChunkStepResult(
         observation=obs,
-        reward=reward_sum,
+        reward=shaped_reward_sum,
         terminated=bool(terminated),
         truncated=bool(truncated),
         info=info,

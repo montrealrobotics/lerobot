@@ -47,6 +47,7 @@ class DSRLEnvWrapper(gym.Wrapper):
         device: str = "cuda",
         n_obs_steps: int = 1,
         reset_fn: Callable[[], None] | None = None,
+        reward_fn: Callable[[float, bool, bool, dict], float] | None = None,
     ):
         super().__init__(env)
         self.noise_dim = noise_dim
@@ -56,6 +57,7 @@ class DSRLEnvWrapper(gym.Wrapper):
         self.device = torch.device(device)
         self.n_obs_steps = n_obs_steps
         self._reset_fn = reset_fn
+        self._reward_fn = reward_fn
 
         # Override action space to be noise space
         self.action_space = gym.spaces.Box(
@@ -108,6 +110,7 @@ class DSRLEnvWrapper(gym.Wrapper):
             self.env,
             action_chunk[0].detach().cpu().numpy(),
             after_step=update_obs_history,
+            reward_fn=self._reward_fn,
         )
 
         return (

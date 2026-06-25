@@ -15,7 +15,7 @@ from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.dsrl.dsrl_config import DSRLConfig
 from lerobot.rl.dsrl.dsrl_env_wrapper import DSRLEnvWrapper
-from lerobot.rl.dsrl.env_utils import DSRL_ACTION_CHUNK_STEPS
+from lerobot.rl.dsrl.env_utils import DSRL_ACTION_CHUNK_RAW_REWARD, DSRL_ACTION_CHUNK_STEPS
 from lerobot.rl.dsrl.noise_actor import (
     LightweightNoiseActorPolicy,
     NoiseActorPolicy,
@@ -32,6 +32,7 @@ def train_dsrl(
     noise_reshape_fn: Callable[[np.ndarray, torch.device], torch.Tensor],
     action_fn: Callable[[dict[str, torch.Tensor], torch.Tensor], torch.Tensor],
     *,
+    reward_fn: Callable[[float, bool, bool, dict], float] | None = None,
     total_steps: int = 500_000,
     device: str = "cuda",
     n_obs_steps: int = 1,
@@ -50,6 +51,7 @@ def train_dsrl(
         obs_to_frozen_obs: Raw env obs → frozen policy observation format.
         noise_reshape_fn: Flat numpy noise → policy-expected noise tensor.
         action_fn: (stacked_obs, noise_tensor) → action_chunk (B, N, action_dim).
+        reward_fn: Optional primitive-step reward shaping function.
         dsrl_config: DSRL hyperparameters (encoders, Q-networks, training).
         wandb_kwargs: Optional ``{"enable": True, "project": "...", "name": "..."}``.
         eval_fn: Optional ``(noise_actor, step) -> {"metric": float}``.
@@ -97,6 +99,7 @@ def train_dsrl(
         action_fn=action_fn,
         device=str(device),
         n_obs_steps=n_obs_steps,
+        reward_fn=reward_fn,
     )
 
     # Build noise actor
@@ -149,13 +152,15 @@ def train_dsrl(
 
     # Training loop
     obs, _ = dsrl_env.reset()
-    episode_reward = 0.0
+    episode_raw_reward = 0.0
+    episode_shaped_reward = 0.0
     episode_steps = 0
     episode_count = 0
     training_step = 0
 
     # Track rolling episode stats for WandB / console
-    recent_returns: deque[float] = deque(maxlen=10)
+    recent_raw_returns: deque[float] = deque(maxlen=10)
+    recent_shaped_returns: deque[float] = deque(maxlen=10)
 
     print(f"Starting DSRL training for {total_steps} environment steps (noise_dim={noise_dim})")
 
@@ -166,33 +171,41 @@ def train_dsrl(
             noise_tensor = noise_actor.select_action(policy_obs)
         noise_np = noise_tensor.squeeze(0).cpu().numpy()
 
-        next_obs, reward, done, truncated, info = dsrl_env.step(noise_np)
+        next_obs, shaped_reward, done, truncated, info = dsrl_env.step(noise_np)
         next_policy_obs = obs_to_policy_obs(next_obs)
         primitive_steps = int(info.get(DSRL_ACTION_CHUNK_STEPS, 1))
+        raw_reward = float(info.get(DSRL_ACTION_CHUNK_RAW_REWARD, shaped_reward))
         env_step += primitive_steps
 
         buffer.add(
             state=policy_obs,
             action=noise_tensor,
-            reward=float(reward),
+            reward=float(shaped_reward),
             next_state=next_policy_obs,
             done=bool(done),
             truncated=bool(truncated),
         )
 
         obs = next_obs
-        episode_reward += reward
+        episode_raw_reward += raw_reward
+        episode_shaped_reward += shaped_reward
         episode_steps += primitive_steps
 
         if done or truncated:
             episode_count += 1
-            recent_returns.append(episode_reward)
+            recent_raw_returns.append(episode_raw_reward)
+            recent_shaped_returns.append(episode_shaped_reward)
 
             episode_metrics = {
-                "episode/return": episode_reward,
+                "episode/return": episode_shaped_reward,
+                "episode/shaped_return": episode_shaped_reward,
+                "episode/raw_return": episode_raw_reward,
                 "episode/length": episode_steps,
                 "episode/count": episode_count,
-                "episode/return_ma10": np.mean(recent_returns) if recent_returns else 0.0,
+                "episode/shaped_return_ma10": np.mean(recent_shaped_returns)
+                if recent_shaped_returns
+                else 0.0,
+                "episode/raw_return_ma10": np.mean(recent_raw_returns) if recent_raw_returns else 0.0,
                 "buffer/size": len(buffer),
             }
 
@@ -201,12 +214,14 @@ def train_dsrl(
 
             print(
                 f"Episode {episode_count} | steps={episode_steps} | "
-                f"return={episode_reward:.2f} | return_ma10={episode_metrics['episode/return_ma10']:.2f} | "
+                f"shaped_return={episode_shaped_reward:.2f} | raw_return={episode_raw_reward:.2f} | "
+                f"shaped_return_ma10={episode_metrics['episode/shaped_return_ma10']:.2f} | "
                 f"buffer={len(buffer)}"
             )
 
             obs, _ = dsrl_env.reset()
-            episode_reward = 0.0
+            episode_raw_reward = 0.0
+            episode_shaped_reward = 0.0
             episode_steps = 0
 
         # Train SAC

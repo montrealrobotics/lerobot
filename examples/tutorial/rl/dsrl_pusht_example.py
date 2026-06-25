@@ -64,6 +64,7 @@ def make_pusht_eval_fn(
     num_videos: int = 3,
     video_fps: int = 10,
     video_dir: str | Path | None = None,
+    success_bonus: float = 300.0,
 ):
     from collections import deque
 
@@ -74,6 +75,7 @@ def make_pusht_eval_fn(
         n_obs_steps = frozen_policy.config.n_obs_steps
 
         total_return = 0.0
+        total_shaped_return = 0.0
         total_steps = 0
         total_max_coverage = 0.0
         successes = 0
@@ -83,6 +85,7 @@ def make_pusht_eval_fn(
             obs, _ = eval_env.reset()
             frozen_policy.reset()
             episode_return = 0.0
+            episode_shaped_return = 0.0
             episode_steps = 0
             frames = []
             episode_success = False
@@ -116,9 +119,13 @@ def make_pusht_eval_fn(
                 done = False
                 for action_np in action_chunk.squeeze(0).cpu().numpy():
                     obs, reward, terminated, truncated, info = eval_env.step(action_np)
-                    episode_return += float(reward)
+                    raw_reward = float(reward)
+                    step_success = bool(info.get("is_success", False))
+                    shaped_reward = raw_reward + (success_bonus if step_success else 0.0)
+                    episode_return += raw_reward
+                    episode_shaped_return += shaped_reward
                     episode_steps += 1
-                    episode_success = episode_success or bool(info.get("is_success", False))
+                    episode_success = episode_success or step_success
                     max_coverage = max(max_coverage, float(info.get("coverage", 0.0)))
                     done = bool(terminated) or bool(truncated) or episode_success
 
@@ -132,6 +139,7 @@ def make_pusht_eval_fn(
 
                 if done:
                     total_return += episode_return
+                    total_shaped_return += episode_shaped_return
                     total_steps += episode_steps
                     total_max_coverage += max_coverage
                     successes += int(episode_success)
@@ -156,6 +164,7 @@ def make_pusht_eval_fn(
         n = max(num_episodes, 1)
         return {
             "avg_return": total_return / n,
+            "avg_shaped_return": total_shaped_return / n,
             "success_rate": successes / n,
             "avg_length": total_steps / n,
             "avg_max_coverage": total_max_coverage / n,
@@ -177,7 +186,7 @@ def _log_eval_videos(
     video_dir.mkdir(parents=True, exist_ok=True)
     log_data = {}
     logged_videos = 0
-    for i, (frames, episode_return, episode_success, max_coverage) in enumerate(episode_frames):
+    for i, (frames, _, _, _) in enumerate(episode_frames):
         if not frames:
             continue
         video_path = video_dir / f"eval_step_{step:08d}_episode_{i:02d}.mp4"
@@ -190,9 +199,6 @@ def _log_eval_videos(
             print(f"[eval video] failed to save {video_path}: {type(exc).__name__}: {exc}")
             continue
         log_data[f"eval/video_{i}"] = wandb.Video(str(video_path), fps=fps, format="mp4")
-        log_data[f"eval/video_{i}_return"] = float(episode_return)
-        log_data[f"eval/video_{i}_success"] = float(episode_success)
-        log_data[f"eval/video_{i}_max_coverage"] = float(max_coverage)
         logged_videos += 1
 
     if log_data:
@@ -225,6 +231,14 @@ def make_pusht_noise_reshape_fn(horizon: int, action_dim: int):
         return noise_tensor.view(1, horizon, action_dim)
 
     return reshape_noise
+
+
+def make_pusht_reward_fn(success_bonus: float):
+    def reward_fn(reward: float, terminated: bool, truncated: bool, info: dict) -> float:
+        del terminated, truncated
+        return reward + (success_bonus if info.get("is_success", False) else 0.0)
+
+    return reward_fn
 
 
 def make_policy_processor_fns(frozen_policy: DiffusionPolicy, policy_path: str, device: torch.device):
@@ -285,6 +299,12 @@ def main():
     parser.add_argument("--dsrl_image_latent", type=int, default=64)
     parser.add_argument("--dsrl_state_latent", type=int, default=64)
     parser.add_argument("--dsrl_num_q", type=int, default=10, help="Number of Q-networks")
+    parser.add_argument(
+        "--success_bonus",
+        type=float,
+        default=300.0,
+        help="Terminal reward bonus added when PushT reports success.",
+    )
     # WandB
     parser.add_argument("--wandb_enable", action="store_true", help="Enable WandB logging")
     parser.add_argument("--wandb_project", type=str, default="lerobot-dsrl", help="WandB project name")
@@ -319,6 +339,7 @@ def main():
     obs_to_policy_obs = make_pusht_obs_to_policy_obs(device, policy_preprocess_fn=policy_preprocess_fn)
     obs_to_frozen_obs = obs_to_policy_obs
     noise_reshape_fn = make_pusht_noise_reshape_fn(horizon, action_dim)
+    reward_fn = make_pusht_reward_fn(args.success_bonus)
 
     image_keys = list(frozen_policy.config.image_features)
 
@@ -351,6 +372,7 @@ def main():
             num_videos=args.eval_videos,
             video_fps=PushtEnv().fps,
             video_dir=Path(args.output_dir) / "eval_videos",
+            success_bonus=args.success_bonus,
         )
 
     dsrl_cfg = DSRLConfig(
@@ -371,6 +393,7 @@ def main():
         obs_to_frozen_obs=obs_to_frozen_obs,
         noise_reshape_fn=noise_reshape_fn,
         action_fn=action_fn,
+        reward_fn=reward_fn,
         total_steps=args.total_steps,
         device=str(device),
         n_obs_steps=n_obs_steps,
