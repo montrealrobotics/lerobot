@@ -298,7 +298,15 @@ def main():
     )
     parser.add_argument("--dsrl_image_latent", type=int, default=64)
     parser.add_argument("--dsrl_state_latent", type=int, default=64)
-    parser.add_argument("--dsrl_num_q", type=int, default=10, help="Number of Q-networks")
+    parser.add_argument(
+        "--dsrl_hidden_dim", type=int, default=1024, help="Hidden dimension for actor/critic MLPs"
+    )
+    parser.add_argument("--dsrl_num_layers", type=int, default=3, help="Number of actor/critic MLP layers")
+    parser.add_argument("--dsrl_num_q", type=int, default=2, help="Number of Q-networks")
+    parser.add_argument(
+        "--utd_ratio", type=int, default=20, help="SAC update-to-data ratio per DSRL macro step"
+    )
+    parser.add_argument("--target_entropy", type=float, default=0.0, help="SAC target entropy")
     parser.add_argument(
         "--success_bonus",
         type=float,
@@ -314,6 +322,8 @@ def main():
     parser.add_argument("--eval_episodes", type=int, default=10, help="Episodes per eval")
     parser.add_argument("--eval_videos", type=int, default=3, help="Log videos for the first N eval episodes")
     args = parser.parse_args()
+    if args.dsrl_num_layers < 1:
+        raise ValueError("--dsrl_num_layers must be >= 1")
 
     device = torch.device(args.device)
 
@@ -380,7 +390,10 @@ def main():
         use_compact_encoder=args.dsrl_image_resize > 0,
         image_latent_dim=args.dsrl_image_latent,
         state_latent_dim=args.dsrl_state_latent,
+        hidden_dims=tuple([args.dsrl_hidden_dim] * args.dsrl_num_layers),
         num_q_heads=args.dsrl_num_q,
+        utd_ratio=args.utd_ratio,
+        target_entropy=args.target_entropy,
         log_freq=args.log_freq,
         save_freq=args.save_freq,
         eval_freq=args.eval_freq,

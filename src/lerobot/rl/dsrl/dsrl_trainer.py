@@ -11,6 +11,7 @@ import numpy as np
 import torch
 
 from lerobot.configs.types import FeatureType, PolicyFeature
+from lerobot.policies.gaussian_actor.configuration_gaussian_actor import CriticNetworkConfig
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.dsrl.dsrl_config import DSRLConfig
@@ -81,7 +82,11 @@ def train_dsrl(
                     "total_steps": total_steps,
                     "buffer_capacity": dsrl_cfg.buffer_capacity,
                     "batch_size": dsrl_cfg.batch_size,
+                    "utd_ratio": dsrl_cfg.utd_ratio,
                     "n_obs_steps": n_obs_steps,
+                    "hidden_dims": list(dsrl_cfg.hidden_dims),
+                    "num_q_heads": dsrl_cfg.num_q_heads,
+                    "target_entropy": dsrl_cfg.target_entropy,
                     "seed": seed,
                 },
             )
@@ -137,6 +142,15 @@ def train_dsrl(
     algo_cfg.actor_lr = dsrl_cfg.actor_lr
     algo_cfg.critic_lr = dsrl_cfg.critic_lr
     algo_cfg.temperature_lr = dsrl_cfg.temperature_lr
+    algo_cfg.utd_ratio = dsrl_cfg.utd_ratio
+    algo_cfg.discount = dsrl_cfg.discount
+    algo_cfg.target_entropy = dsrl_cfg.target_entropy
+    algo_cfg.critic_target_update_weight = dsrl_cfg.critic_target_update_weight
+    algo_cfg.policy_update_freq = dsrl_cfg.policy_update_freq
+    algo_cfg.critic_network_kwargs = CriticNetworkConfig(
+        hidden_dims=list(dsrl_cfg.hidden_dims),
+        activate_final=True,
+    )
     algorithm = SACAlgorithm(policy=noise_actor, config=algo_cfg)
     algorithm.make_optimizers_and_scheduler()
 
