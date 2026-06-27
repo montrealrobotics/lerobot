@@ -161,26 +161,27 @@ class LightweightNoiseActorPolicy(NoiseActorPolicy):
 
     def __init__(self, config: NoiseActorConfig, dsrl_config: DSRLConfig | None = None):
         self.dsrl_config = dsrl_config or DSRLConfig()
-        self._dsrl_config = self.dsrl_config
         PreTrainedPolicy.__init__(self, config)
         config.validate_features()
 
         image_keys = [k for k in config.input_features if k.startswith("observation.image")]
         state_key = "observation.state" if "observation.state" in config.input_features else None
+        state_dim = config.input_features[state_key].shape[0] if state_key is not None else None
 
         encoder = CompactObservationEncoder(
             image_keys=image_keys,
             state_key=state_key,
-            image_latent_dim=self._dsrl_config.image_latent_dim,
-            state_latent_dim=self._dsrl_config.state_latent_dim,
-            resize_size=self._dsrl_config.image_resize_size,
+            state_dim=state_dim,
+            image_latent_dim=self.dsrl_config.image_latent_dim,
+            state_latent_dim=self.dsrl_config.state_latent_dim,
+            resize_size=self.dsrl_config.image_resize_size,
         )
 
         self.shared_encoder = True
         self.encoder_critic = encoder
         self.encoder_actor = encoder
 
-        actor_hidden_dims = list(self._dsrl_config.hidden_dims)
+        actor_hidden_dims = list(self.dsrl_config.hidden_dims)
         self.actor = Policy(
             encoder=self.encoder_actor,
             network=MLP(input_dim=encoder.output_dim, hidden_dims=actor_hidden_dims),

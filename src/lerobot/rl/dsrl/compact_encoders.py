@@ -56,7 +56,8 @@ class CompactObservationEncoder(nn.Module):
     def __init__(
         self,
         image_keys: list[str],
-        state_key: str = "observation.state",
+        state_key: str | None = "observation.state",
+        state_dim: int | None = None,
         image_latent_dim: int = 64,
         state_latent_dim: int = 64,
         resize_size: int | None = 64,
@@ -67,6 +68,8 @@ class CompactObservationEncoder(nn.Module):
         self.state_key = state_key
         self.has_state = state_key is not None
         self.resize_size = resize_size
+        if self.has_state and state_dim is None:
+            raise ValueError("state_dim must be provided when state_key is set")
 
         if self.has_images:
             num_images = len(image_keys)
@@ -87,11 +90,10 @@ class CompactObservationEncoder(nn.Module):
 
         if self.has_state:
             self.state_proj = nn.Sequential(
-                nn.Linear(1, state_latent_dim),  # dummy, real dim set on first forward
+                nn.Linear(state_dim, state_latent_dim),
                 nn.LayerNorm(state_latent_dim),
                 nn.Tanh(),
             )
-            self._state_dim_fixed = False
         else:
             self.state_proj = None
 
@@ -150,10 +152,6 @@ class CompactObservationEncoder(nn.Module):
                 state = state.squeeze(1)
             if state.ndim == 1:
                 state = state.unsqueeze(0)
-            if not self._state_dim_fixed and state.ndim == 2:
-                sd = state.shape[-1]
-                self.state_proj[0] = nn.Linear(sd, self.state_proj[0].out_features).to(state.device)
-                self._state_dim_fixed = True
             features.append(self.state_proj(state))
 
         return torch.cat(features, dim=-1)
