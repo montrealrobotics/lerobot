@@ -27,12 +27,14 @@ from __future__ import annotations
 
 import argparse
 
+import gymnasium as gym
 import numpy as np
 import torch
 
 from lerobot.envs.robocasa_env import RoboCasaEnv
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.rl.dsrl import train_dsrl
+from lerobot.rl.dsrl.dsrl_config import DSRLConfig
 
 
 def make_robocasa_env(task: str, camera_names: str = "robot0_agentview_center", seed: int = 0):
@@ -47,24 +49,39 @@ def make_robocasa_env(task: str, camera_names: str = "robot0_agentview_center", 
     )
 
 
-def make_diffusion_obs_to_policy_obs(device: torch.device):
-    def obs_to_policy_obs(obs: dict) -> dict[str, torch.Tensor]:
+def make_prepare_obs_fn(device: torch.device):
+    """Raw (batched) RoboCasa obs → noise-actor observation dict.
+
+    Under a ``gym.vector.VectorEnv`` the observation already carries a leading batch
+    dimension, so no ``unsqueeze`` is needed.
+    """
+
+    def prepare_obs(obs: dict) -> dict[str, torch.Tensor]:
         out: dict[str, torch.Tensor] = {}
         agent_pos = obs.get("agent_pos")
         if agent_pos is not None:
-            out["observation.state"] = torch.from_numpy(agent_pos).float().unsqueeze(0).to(device)
+            out["observation.state"] = torch.as_tensor(agent_pos, dtype=torch.float32, device=device)
         for cam_name, img in obs.get("pixels", {}).items():
-            out[f"observation.image.{cam_name}"] = (
-                torch.from_numpy(img).float().permute(2, 0, 1).unsqueeze(0).to(device)
-            )
+            img_t = torch.as_tensor(img, dtype=torch.float32, device=device)  # (B, H, W, C)
+            out[f"observation.image.{cam_name}"] = img_t.permute(0, 3, 1, 2)
         return out
-    return obs_to_policy_obs
+
+    return prepare_obs
 
 
-def make_diffusion_noise_reshape_fn(horizon: int, action_dim: int):
-    def reshape_noise(noise_np: np.ndarray, device: torch.device) -> torch.Tensor:
-        return torch.from_numpy(noise_np).float().to(device).view(1, horizon, action_dim)
-    return reshape_noise
+def make_generate_action_chunk_fn(
+    frozen_policy: DiffusionPolicy, horizon: int, action_dim: int, device: torch.device
+):
+    image_keys = list(frozen_policy.config.image_features)
+
+    def generate_action_chunk(stacked_obs: dict, noise: np.ndarray) -> torch.Tensor:
+        noise_tensor = torch.from_numpy(noise).float().to(device).view(noise.shape[0], horizon, action_dim)
+        batch = dict(stacked_obs)
+        if image_keys:
+            batch["observation.images"] = torch.stack([batch[k] for k in image_keys], dim=-4)
+        return frozen_policy.diffusion.generate_actions(batch, noise=noise_tensor)
+
+    return generate_action_chunk
 
 
 def main():
@@ -93,35 +110,25 @@ def main():
     print(f"Diffusion policy: horizon={horizon}, action_dim={action_dim}, "
           f"n_obs_steps={n_obs_steps}, noise_dim={noise_dim}")
 
-    env = make_robocasa_env(task=args.task, seed=args.seed)
+    env = gym.vector.SyncVectorEnv([lambda: make_robocasa_env(task=args.task, seed=args.seed)])
 
-    obs_to_policy_obs = make_diffusion_obs_to_policy_obs(device)
-    obs_to_frozen_obs = obs_to_policy_obs
-    noise_reshape_fn = make_diffusion_noise_reshape_fn(horizon, action_dim)
-
-    image_keys = list(frozen_policy.config.image_features)
-
-    def action_fn(stacked_obs: dict, noise: torch.Tensor) -> torch.Tensor:
-        batch = dict(stacked_obs)
-        if image_keys:
-            batch["observation.images"] = torch.stack([batch[k] for k in image_keys], dim=-4)
-        return frozen_policy.diffusion.generate_actions(batch, noise=noise)
+    prepare_obs_fn = make_prepare_obs_fn(device)
+    generate_action_chunk_fn = make_generate_action_chunk_fn(frozen_policy, horizon, action_dim, device)
 
     train_dsrl(
         env=env,
         noise_dim=noise_dim,
-        obs_to_policy_obs=obs_to_policy_obs,
-        obs_to_frozen_obs=obs_to_frozen_obs,
-        noise_reshape_fn=noise_reshape_fn,
-        action_fn=action_fn,
+        prepare_obs_fn=prepare_obs_fn,
+        generate_action_chunk_fn=generate_action_chunk_fn,
         total_steps=args.total_steps,
         device=str(device),
         n_obs_steps=n_obs_steps,
-        log_freq=args.log_freq,
-        save_freq=args.save_freq,
+        dsrl_config=DSRLConfig(log_freq=args.log_freq, save_freq=args.save_freq),
         seed=args.seed,
         output_dir=args.output_dir,
     )
+
+    env.close()
 
 
 if __name__ == "__main__":

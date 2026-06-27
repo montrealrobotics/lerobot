@@ -34,15 +34,14 @@ Notes:
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 
+import gymnasium as gym
 import numpy as np
 import torch
 
 from lerobot.envs.robocasa_env import RoboCasaEnv
 from lerobot.policies.pi0.modeling_pi0 import PI0Policy
 from lerobot.rl.dsrl import train_dsrl
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -60,70 +59,32 @@ def make_robocasa_env(task: str, camera_names: str = "robot0_agentview_center", 
     )
 
 
-def make_pi0_noise_reshape_fn(
-    noise_chunk_size: int,
-    full_chunk_size: int,
-    max_action_dim: int,
-):
-    """Build noise reshape function for pi0.
+def make_prepare_obs_fn(device: torch.device):
+    """Raw (batched) RoboCasa obs → compact noise-actor observation (image + state).
 
-    Pi0 expects noise of shape (batch, full_chunk_size, max_action_dim).
-    The RL policy outputs a smaller noise (batch, noise_chunk_size, max_action_dim)
-    which is padded by repeating the last step to match full_chunk_size.
+    This is what the small SAC policy sees. Under a vector env the observation already
+    carries a leading batch dimension.
     """
 
-    def reshape_noise(noise_np: np.ndarray, device: torch.device) -> torch.Tensor:
-        noise_tensor = torch.from_numpy(noise_np).float().to(device)
-        # Reshape flat → (1, noise_chunk_size, max_action_dim)
-        noise_tensor = noise_tensor.view(1, noise_chunk_size, max_action_dim)
-        # Pad to full chunk size by repeating the last noise step
-        pad_size = full_chunk_size - noise_chunk_size
-        if pad_size > 0:
-            last_step = noise_tensor[:, -1:, :]  # (1, 1, max_action_dim)
-            padding = last_step.repeat(1, pad_size, 1)
-            noise_tensor = torch.cat([noise_tensor, padding], dim=1)
-        return noise_tensor
-
-    return reshape_noise
-
-
-def make_pi0_obs_to_policy_obs(device: torch.device):
-    """Build function that converts RoboCasa raw obs → noise actor observation format.
-
-    This is a simple image + state format that the small SAC policy can process.
-    """
-
-    def obs_to_policy_obs(obs: dict) -> dict[str, torch.Tensor]:
+    def prepare_obs(obs: dict) -> dict[str, torch.Tensor]:
         out: dict[str, torch.Tensor] = {}
-
         agent_pos = obs.get("agent_pos")
         if agent_pos is not None:
-            out["observation.state"] = torch.from_numpy(agent_pos).float().unsqueeze(0).to(device)
-
-        pixels = obs.get("pixels", {})
-        for cam_name, img in pixels.items():
-            img_tensor = torch.from_numpy(img).float().permute(2, 0, 1).unsqueeze(0).to(device)
-            out[f"observation.image.{cam_name}"] = img_tensor
-
+            out["observation.state"] = torch.as_tensor(agent_pos, dtype=torch.float32, device=device)
+        for cam_name, img in obs.get("pixels", {}).items():
+            img_t = torch.as_tensor(img, dtype=torch.float32, device=device)  # (B, H, W, C)
+            out[f"observation.image.{cam_name}"] = img_t.permute(0, 3, 1, 2)
         return out
 
-    return obs_to_policy_obs
+    return prepare_obs
 
 
-def make_pi0_obs_to_frozen_obs(
-    device: torch.device,
-    image_features: list[str],
-    max_state_dim: int,
-):
-    """Build function that converts RoboCasa raw obs → pi0-format batch dict.
+def make_prepare_frozen_obs_fn(device: torch.device, image_features: list[str], max_state_dim: int):
+    """Raw (batched) RoboCasa obs → pi0-format batch dict.
 
-    Pi0 expects:
-      - Images under keys matching ``image_features`` (e.g. "observation.image.robot0_agentview_center")
-      - ``observation.state``: state vector
-      - ``observation.language.tokens`` and ``observation.language.attention_mask``
-
-    Note: Language tokens are loaded from a cached tokenizer (lazy init). If your
-    pi0 checkpoint uses a different tokenizer, adjust ``_TOKENIZER_NAME`` below.
+    Pi0 expects images under keys in ``image_features``, a state padded to
+    ``max_state_dim``, and language tokens. Tokens come from a lazily-loaded tokenizer;
+    adjust ``_TOKENIZER_NAME`` if your checkpoint uses a different one.
     """
 
     _TOKENIZER_NAME = "google/paligemma-3b-pt-224"
@@ -137,38 +98,75 @@ def make_pi0_obs_to_frozen_obs(
             _tokenizer = AutoTokenizer.from_pretrained(_TOKENIZER_NAME)
         return _tokenizer
 
-    def obs_to_frozen_obs(obs: dict) -> dict[str, torch.Tensor]:
+    def prepare_frozen_obs(obs: dict) -> dict[str, torch.Tensor]:
         out: dict[str, torch.Tensor] = {}
 
-        # Images — map camera names to pi0 image feature keys
         pixels = obs.get("pixels", {})
+        batch_size = 1
         for cam_name, img in pixels.items():
             key = f"observation.image.{cam_name}"
             if key in image_features:
-                img_tensor = torch.from_numpy(img).float().permute(2, 0, 1).unsqueeze(0).to(device)
-                out[key] = img_tensor
+                img_t = torch.as_tensor(img, dtype=torch.float32, device=device)  # (B, H, W, C)
+                out[key] = img_t.permute(0, 3, 1, 2)
+                batch_size = img_t.shape[0]
 
-        # State — pad to max_state_dim
         agent_pos = obs.get("agent_pos")
         if agent_pos is not None:
-            state = torch.from_numpy(agent_pos).float().unsqueeze(0).to(device)
+            state = torch.as_tensor(agent_pos, dtype=torch.float32, device=device)  # (B, D)
+            batch_size = state.shape[0]
             if state.shape[-1] < max_state_dim:
-                padding = torch.zeros(1, max_state_dim - state.shape[-1], device=device)
+                padding = torch.zeros(state.shape[0], max_state_dim - state.shape[-1], device=device)
                 state = torch.cat([state, padding], dim=-1)
             out["observation.state"] = state
 
-        # Language tokens — encode a generic prompt
+        # Language tokens — the same generic prompt for every env in the batch.
         tokenizer = _get_tokenizer()
         prompt = "Perform the task in the kitchen environment."
         tokenized = tokenizer(
             prompt, return_tensors="pt", padding="max_length", truncation=True, max_length=32
         )
-        out["observation.language.tokens"] = tokenized["input_ids"].to(device)
-        out["observation.language.attention_mask"] = tokenized["attention_mask"].to(device)
-
+        out["observation.language.tokens"] = tokenized["input_ids"].to(device).repeat(batch_size, 1)
+        out["observation.language.attention_mask"] = (
+            tokenized["attention_mask"].to(device).repeat(batch_size, 1)
+        )
         return out
 
-    return obs_to_frozen_obs
+    return prepare_frozen_obs
+
+
+def make_generate_action_chunk_fn(
+    frozen_policy: PI0Policy,
+    noise_chunk_size: int,
+    full_chunk_size: int,
+    max_action_dim: int,
+    device: torch.device,
+):
+    """Bundle noise padding + pi0 action generation.
+
+    The RL policy emits a small noise ``(B, noise_chunk_size * max_action_dim)`` which is
+    reshaped and padded (by repeating the last step) to pi0's full chunk size. The frozen
+    observation history is stacked along ``dim=1``; with ``n_obs_steps=1`` we drop that axis
+    to recover pi0's expected ``(B, ...)`` batch layout, then defer to
+    ``PI0Policy.predict_action_chunk`` (which handles image/state/token preprocessing and
+    forwards ``noise`` to the flow-matching sampler).
+
+    NOTE: untested against real pi0 weights — pi0 wiring is left for later verification.
+    """
+
+    def generate_action_chunk(stacked_obs: dict, noise: np.ndarray) -> torch.Tensor:
+        batch_size = noise.shape[0]
+        noise_tensor = torch.from_numpy(noise).float().to(device)
+        noise_tensor = noise_tensor.view(batch_size, noise_chunk_size, max_action_dim)
+        pad_size = full_chunk_size - noise_chunk_size
+        if pad_size > 0:
+            padding = noise_tensor[:, -1:, :].repeat(1, pad_size, 1)
+            noise_tensor = torch.cat([noise_tensor, padding], dim=1)
+
+        # Drop the single-step history axis pi0 does not consume.
+        batch = {key: value[:, 0] for key, value in stacked_obs.items()}
+        return frozen_policy.predict_action_chunk(batch, noise=noise_tensor)
+
+    return generate_action_chunk
 
 
 def main():
@@ -202,30 +200,33 @@ def main():
     )
 
     # ── Create environment ──────────────────────────────────────────────
-    env = make_robocasa_env(task=args.task, seed=args.seed)
+    env = gym.vector.SyncVectorEnv([lambda: make_robocasa_env(task=args.task, seed=args.seed)])
 
     # ── Observation / noise adapters ────────────────────────────────────
-    obs_to_policy_obs = make_pi0_obs_to_policy_obs(device)
-    obs_to_frozen_obs = make_pi0_obs_to_frozen_obs(
+    prepare_obs_fn = make_prepare_obs_fn(device)
+    prepare_frozen_obs_fn = make_prepare_frozen_obs_fn(
         device=device,
         image_features=frozen_policy.config.image_features,
         max_state_dim=frozen_policy.config.max_state_dim,
     )
-    noise_reshape_fn = make_pi0_noise_reshape_fn(noise_chunk_size, full_chunk_size, max_action_dim)
+    generate_action_chunk_fn = make_generate_action_chunk_fn(
+        frozen_policy, noise_chunk_size, full_chunk_size, max_action_dim, device
+    )
 
     # ── Train ───────────────────────────────────────────────────────────
     train_dsrl(
         env=env,
-        frozen_policy=frozen_policy,
         noise_dim=noise_dim,
-        obs_to_policy_obs=obs_to_policy_obs,
-        obs_to_frozen_obs=obs_to_frozen_obs,
-        noise_reshape_fn=noise_reshape_fn,
+        prepare_obs_fn=prepare_obs_fn,
+        generate_action_chunk_fn=generate_action_chunk_fn,
+        prepare_frozen_obs_fn=prepare_frozen_obs_fn,
         total_steps=args.total_steps,
         device=str(device),
         seed=args.seed,
         output_dir=args.output_dir,
     )
+
+    env.close()
 
 
 if __name__ == "__main__":
