@@ -15,8 +15,6 @@ class DSRLConfig:
     """
 
     # Noise actor architecture
-    noise_dim: int = 32
-    state_dim: int = 8
     image_latent_dim: int = 64
     state_latent_dim: int = 64
     hidden_dims: tuple[int, ...] = (1024, 1024, 1024)
@@ -27,7 +25,6 @@ class DSRLConfig:
 
     # Q-network
     num_q_heads: int = 2
-    q_aggregation: str = "mean"  # "mean" or "min"
 
     # Training
     min_buffer_size: int = 1_000

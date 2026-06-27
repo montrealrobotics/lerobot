@@ -15,8 +15,11 @@ from lerobot.policies.gaussian_actor.configuration_gaussian_actor import CriticN
 from lerobot.rl.algorithms.sac import SACAlgorithm, SACAlgorithmConfig
 from lerobot.rl.buffer import ReplayBuffer
 from lerobot.rl.dsrl.dsrl_config import DSRLConfig
-from lerobot.rl.dsrl.dsrl_env_wrapper import DSRLEnvWrapper
-from lerobot.rl.dsrl.env_utils import DSRL_ACTION_CHUNK_RAW_REWARD, DSRL_ACTION_CHUNK_STEPS
+from lerobot.rl.dsrl.dsrl_env_wrapper import (
+    DSRL_ACTION_CHUNK_RAW_REWARD,
+    DSRL_ACTION_CHUNK_STEPS,
+    DSRLEnvWrapper,
+)
 from lerobot.rl.dsrl.noise_actor import (
     LightweightNoiseActorPolicy,
     NoiseActorPolicy,
@@ -28,11 +31,10 @@ from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 def train_dsrl(
     env,
     noise_dim: int,
-    obs_to_policy_obs: Callable[[dict], dict[str, torch.Tensor]],
-    obs_to_frozen_obs: Callable[[dict], dict[str, torch.Tensor]],
-    noise_reshape_fn: Callable[[np.ndarray, torch.device], torch.Tensor],
-    action_fn: Callable[[dict[str, torch.Tensor], torch.Tensor], torch.Tensor],
+    prepare_obs_fn: Callable[[dict], dict[str, torch.Tensor]],
+    generate_action_chunk_fn: Callable[[dict[str, torch.Tensor], np.ndarray], torch.Tensor],
     *,
+    prepare_frozen_obs_fn: Callable[[dict], dict[str, torch.Tensor]] | None = None,
     reward_fn: Callable[[float, bool, bool, dict], float] | None = None,
     total_steps: int = 500_000,
     device: str = "cuda",
@@ -46,12 +48,13 @@ def train_dsrl(
     """Run DSRL training. Returns the trained NoiseActorPolicy.
 
     Args:
-        env: Base Gymnasium environment.
+        env: A ``gym.vector.VectorEnv`` producing raw observations.
         noise_dim: Flat noise vector dimension.
-        obs_to_policy_obs: Raw env obs → noise actor observation format.
-        obs_to_frozen_obs: Raw env obs → frozen policy observation format.
-        noise_reshape_fn: Flat numpy noise → policy-expected noise tensor.
-        action_fn: (stacked_obs, noise_tensor) → action_chunk (B, N, action_dim).
+        prepare_obs_fn: Raw env obs → noise-actor observation (batched tensors).
+        generate_action_chunk_fn: ``(stacked_obs, noise) -> action_chunk`` for the frozen
+            policy, returning ``(num_envs, n_action_steps, action_dim)``.
+        prepare_frozen_obs_fn: Optional raw env obs → frozen-policy observation, when it
+            differs from the noise-actor observation (e.g. VLAs needing language tokens).
         reward_fn: Optional primitive-step reward shaping function.
         dsrl_config: DSRL hyperparameters (encoders, Q-networks, training).
         wandb_kwargs: Optional ``{"enable": True, "project": "...", "name": "..."}``.
@@ -88,6 +91,7 @@ def train_dsrl(
                     "num_q_heads": dsrl_cfg.num_q_heads,
                     "target_entropy": dsrl_cfg.target_entropy,
                     "seed": seed,
+                    "collect_envs": getattr(env, "num_envs", 1),
                 },
             )
             wandb_run = wandb
@@ -95,21 +99,22 @@ def train_dsrl(
         except ImportError:
             print("wandb not installed — skipping WandB logging.")
 
-    # Wrap environment
+    # Wrap environment. The wrapper presents a standard RL interface: reset()/step()
+    # return noise-actor observations, so the loop below stays frozen-policy agnostic.
     dsrl_env = DSRLEnvWrapper(
         env=env,
         noise_dim=noise_dim,
-        prepare_obs_fn=obs_to_frozen_obs,
-        noise_reshape_fn=noise_reshape_fn,
-        action_fn=action_fn,
+        prepare_obs_fn=prepare_obs_fn,
+        generate_action_chunk_fn=generate_action_chunk_fn,
         device=str(device),
         n_obs_steps=n_obs_steps,
+        prepare_frozen_obs_fn=prepare_frozen_obs_fn,
         reward_fn=reward_fn,
     )
+    num_collect_envs = dsrl_env.num_envs
 
     # Build noise actor
-    dummy_obs, _ = dsrl_env.reset()
-    dummy_policy_obs = obs_to_policy_obs(dummy_obs)
+    dummy_policy_obs, _ = dsrl_env.reset()
 
     input_features: dict[str, PolicyFeature] = {}
     for key, tensor in dummy_policy_obs.items():
@@ -165,10 +170,10 @@ def train_dsrl(
     )
 
     # Training loop
-    obs, _ = dsrl_env.reset()
-    episode_raw_reward = 0.0
-    episode_shaped_reward = 0.0
-    episode_steps = 0
+    policy_obs, _ = dsrl_env.reset()
+    episode_raw_rewards = np.zeros(num_collect_envs, dtype=np.float32)
+    episode_shaped_rewards = np.zeros(num_collect_envs, dtype=np.float32)
+    episode_steps = np.zeros(num_collect_envs, dtype=np.int64)
     episode_count = 0
     training_step = 0
 
@@ -176,37 +181,47 @@ def train_dsrl(
     recent_raw_returns: deque[float] = deque(maxlen=10)
     recent_shaped_returns: deque[float] = deque(maxlen=10)
 
-    print(f"Starting DSRL training for {total_steps} environment steps (noise_dim={noise_dim})")
+    print(
+        f"Starting DSRL training for {total_steps} environment steps "
+        f"(noise_dim={noise_dim}, collect_envs={num_collect_envs})"
+    )
 
     env_step = 0
     while env_step < total_steps:
-        policy_obs = obs_to_policy_obs(obs)
         with torch.no_grad():
             noise_tensor = noise_actor.select_action(policy_obs)
-        noise_np = noise_tensor.squeeze(0).cpu().numpy()
+        noise_np = noise_tensor.cpu().numpy().reshape(num_collect_envs, noise_dim)
 
-        next_obs, shaped_reward, done, truncated, info = dsrl_env.step(noise_np)
-        next_policy_obs = obs_to_policy_obs(next_obs)
-        primitive_steps = int(info.get(DSRL_ACTION_CHUNK_STEPS, 1))
-        raw_reward = float(info.get(DSRL_ACTION_CHUNK_RAW_REWARD, shaped_reward))
-        env_step += primitive_steps
+        next_policy_obs, shaped_reward, done, truncated, info = dsrl_env.step(noise_np)
+        primitive_steps = _as_int_batch(info.get(DSRL_ACTION_CHUNK_STEPS, 1), num_collect_envs)
+        shaped_rewards = _as_float_batch(shaped_reward, num_collect_envs)
+        raw_rewards = _as_float_batch(info.get(DSRL_ACTION_CHUNK_RAW_REWARD, shaped_reward), num_collect_envs)
+        dones = _as_bool_batch(done, num_collect_envs)
+        truncateds = _as_bool_batch(truncated, num_collect_envs)
+        collected_steps = int(primitive_steps.sum())
+        env_step += collected_steps
 
-        buffer.add(
-            state=policy_obs,
-            action=noise_tensor,
-            reward=float(shaped_reward),
-            next_state=next_policy_obs,
-            done=bool(done),
-            truncated=bool(truncated),
-        )
+        for env_idx in range(num_collect_envs):
+            buffer.add(
+                state=_slice_batch(policy_obs, env_idx),
+                action=noise_tensor[env_idx : env_idx + 1],
+                reward=float(shaped_rewards[env_idx]),
+                next_state=_slice_batch(next_policy_obs, env_idx),
+                done=bool(dones[env_idx]),
+                truncated=bool(truncateds[env_idx]),
+            )
 
-        obs = next_obs
-        episode_raw_reward += raw_reward
-        episode_shaped_reward += shaped_reward
+        policy_obs = next_policy_obs
+        episode_raw_rewards += raw_rewards
+        episode_shaped_rewards += shaped_rewards
         episode_steps += primitive_steps
 
-        if done or truncated:
+        finished = dones | truncateds
+        for finished_env_idx in np.flatnonzero(finished):
             episode_count += 1
+            episode_raw_reward = float(episode_raw_rewards[finished_env_idx])
+            episode_shaped_reward = float(episode_shaped_rewards[finished_env_idx])
+            finished_episode_steps = int(episode_steps[finished_env_idx])
             recent_raw_returns.append(episode_raw_reward)
             recent_shaped_returns.append(episode_shaped_reward)
 
@@ -214,8 +229,9 @@ def train_dsrl(
                 "episode/return": episode_shaped_reward,
                 "episode/shaped_return": episode_shaped_reward,
                 "episode/raw_return": episode_raw_reward,
-                "episode/length": episode_steps,
+                "episode/length": finished_episode_steps,
                 "episode/count": episode_count,
+                "episode/env_index": finished_env_idx,
                 "episode/shaped_return_ma10": np.mean(recent_shaped_returns)
                 if recent_shaped_returns
                 else 0.0,
@@ -227,16 +243,17 @@ def train_dsrl(
                 wandb_run.log(episode_metrics, step=env_step)
 
             print(
-                f"Episode {episode_count} | steps={episode_steps} | "
+                f"Episode {episode_count} | env={finished_env_idx} | steps={finished_episode_steps} | "
                 f"shaped_return={episode_shaped_reward:.2f} | raw_return={episode_raw_reward:.2f} | "
                 f"shaped_return_ma10={episode_metrics['episode/shaped_return_ma10']:.2f} | "
                 f"buffer={len(buffer)}"
             )
 
-            obs, _ = dsrl_env.reset()
-            episode_raw_reward = 0.0
-            episode_shaped_reward = 0.0
-            episode_steps = 0
+        if finished.any():
+            policy_obs, _ = dsrl_env.reset()
+            episode_raw_rewards.fill(0.0)
+            episode_shaped_rewards.fill(0.0)
+            episode_steps.fill(0)
 
         # Train SAC
         if len(buffer) >= dsrl_cfg.min_buffer_size:
@@ -265,7 +282,7 @@ def train_dsrl(
             eval_fn is not None
             and dsrl_cfg.eval_freq > 0
             and env_step > 0
-            and env_step % dsrl_cfg.eval_freq < primitive_steps
+            and env_step % dsrl_cfg.eval_freq < max(collected_steps, 1)
         ):
             eval_metrics = eval_fn(noise_actor, env_step)
             if wandb_run is not None:
@@ -273,7 +290,7 @@ def train_dsrl(
             print(f"[eval @ step {env_step}] " + " ".join(f"{k}={v:.3f}" for k, v in eval_metrics.items()))
 
         # Save checkpoint
-        if env_step > 0 and env_step % dsrl_cfg.save_freq < primitive_steps:
+        if env_step > 0 and env_step % dsrl_cfg.save_freq < max(collected_steps, 1):
             ckpt_dir = output_dir / f"step_{env_step}"
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             noise_actor.save_pretrained(ckpt_dir)
@@ -290,3 +307,28 @@ def train_dsrl(
 
     dsrl_env.close()
     return noise_actor
+
+
+def _as_float_batch(value, batch_size: int) -> np.ndarray:
+    arr = np.asarray(value, dtype=np.float32)
+    if arr.ndim == 0:
+        return np.full(batch_size, float(arr), dtype=np.float32)
+    return arr.reshape(batch_size)
+
+
+def _as_int_batch(value, batch_size: int) -> np.ndarray:
+    arr = np.asarray(value, dtype=np.int64)
+    if arr.ndim == 0:
+        return np.full(batch_size, int(arr), dtype=np.int64)
+    return arr.reshape(batch_size)
+
+
+def _as_bool_batch(value, batch_size: int) -> np.ndarray:
+    arr = np.asarray(value, dtype=bool)
+    if arr.ndim == 0:
+        return np.full(batch_size, bool(arr), dtype=bool)
+    return arr.reshape(batch_size)
+
+
+def _slice_batch(batch: dict[str, torch.Tensor], index: int) -> dict[str, torch.Tensor]:
+    return {key: value[index : index + 1] for key, value in batch.items()}
