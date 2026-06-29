@@ -61,6 +61,7 @@ from lerobot.robots import (  # noqa: F401
     so_follower,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.utils.msgpack_numpy import packb, unpackb, Packer
 
 from .configs import RobotClientConfig
 from .helpers import (
@@ -158,7 +159,23 @@ class RobotClient:
             raise ValueError("Input observation needs to be a TimedObservation!")
 
         start_time = time.perf_counter()
-        observation_bytes = pickle.dumps(obs)
+
+        raw_obs_data = obs.get_observation()
+        processed_obs = {}
+        for k, v in raw_obs_data.items():
+            if isinstance(v, torch.Tensor):
+                processed_obs[k] = v.detach().cpu().numpy()
+            else:
+                processed_obs[k] = v
+
+        obs_dict = {
+            "timestamp": obs.get_timestamp(),
+            "timestep": obs.get_timestep(),
+            "observation": processed_obs,
+            "must_go": obs.must_go
+        }
+
+        observation_bytes = packb(obs_dict)
         serialize_time = time.perf_counter() - start_time
         self.logger.debug(f"Observation serialization time: {serialize_time:.6f}s")
 
@@ -180,8 +197,8 @@ class RobotClient:
                 self.websocket_connection = websocket
                 self.logger.info("Connection Handshake established with Proxy Gateway.")
 
-                # Replicating SendPolicyInstructions logic
-                policy_config_bytes = pickle.dumps(self.policy_config)
+                policy_config_bytes = packb(asdict(self.policy_config))
+
                 # Routing identifier prepended: 0x01 tells server this is initialization data
                 setup_payload = b"\x01" + policy_config_bytes
                 await websocket.send(setup_payload)
@@ -208,8 +225,20 @@ class RobotClient:
                                 receive_time = time.time()
 
                                 deserialize_start = time.perf_counter()
-                                timed_actions = pickle.loads(message)  # nosec
+                                raw_action_data = unpackb(message)
                                 deserialize_time = time.perf_counter() - deserialize_start
+
+                                timed_actions = []
+                                for item in raw_action_data:
+                                    t_stamp = item.get(b"timestamp", item.get("timestamp"))
+                                    t_step = item.get(b"timestep", item.get("timestep"))
+                                    act_val = item.get(b"action", item.get("action"))
+
+                                    action_tensor = torch.from_numpy(act_val)
+
+                                    timed_actions.append(
+                                        TimedAction(timestamp=t_stamp, timestep=t_step, action=action_tensor)
+                                    )
 
                                 if len(timed_actions) > 0:
                                     received_device = timed_actions[0].get_action().device.type

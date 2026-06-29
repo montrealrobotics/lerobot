@@ -41,6 +41,7 @@ import websockets
 from lerobot.policies import get_policy_class, make_pre_post_processors
 from lerobot.processor import PolicyProcessorPipeline
 from lerobot.types import PolicyAction
+from lerobot.utils.msgpack_numpy import packb, unpackb, Packer
 
 from .configs import PolicyServerConfig
 from .constants import SUPPORTED_POLICIES
@@ -63,6 +64,7 @@ class PolicyServer:
     def __init__(self, config: PolicyServerConfig):
         self.config = config
         self.shutdown_event = threading.Event()
+        self._action_packer = Packer()
 
         # FPS measurement
         self.fps_tracker = FPSTracker(target_fps=config.fps)
@@ -110,7 +112,10 @@ class PolicyServer:
             self.logger.warning("Server is not running. Ignoring policy instructions.")
             return
 
-        policy_specs = pickle.loads(data)  # nosec
+        # policy_specs = pickle.loads(data)  # nosec
+        raw_specs = unpackb(data)
+        specs_dict = {k.decode() if isinstance(k, bytes) else k: v for k, v in raw_specs.items()}
+        policy_specs = RemotePolicyConfig(**specs_dict)
 
         if not isinstance(policy_specs, RemotePolicyConfig):
             raise TypeError(f"Policy specs must be a RemotePolicyConfig. Got {type(policy_specs)}")
@@ -162,8 +167,17 @@ class PolicyServer:
         receive_time = time.time()
         start_deserialize = time.perf_counter()
 
-        timed_observation = pickle.loads(data)  # nosec
+        # timed_observation = pickle.loads(data)  # nosec
+        # deserialize_time = time.perf_counter() - start_deserialize
+        obs_dict = unpackb(data)
         deserialize_time = time.perf_counter() - start_deserialize
+
+        timed_observation = TimedObservation(
+            timestamp=obs_dict[b"timestamp"],
+            timestep=obs_dict[b"timestep"],
+            observation=obs_dict[b"observation"],
+            must_go=obs_dict.get(b"must_go", False)
+        )
 
         self.logger.debug(f"Received observation #{timed_observation.get_timestep()}")
 
@@ -206,7 +220,16 @@ class PolicyServer:
             inference_time = time.perf_counter() - start_time
 
             start_time = time.perf_counter()
-            actions_bytes = pickle.dumps(action_chunk)  # nosec
+            action_data = [
+                {
+                    "timestamp": action.timestamp,
+                    "timestep": action.timestep,
+                    "action": action.action.detach().cpu().numpy() # Send raw NumPy data
+                }
+                for action in action_chunk
+            ]
+
+            actions_bytes = self._action_packer.pack(action_data)
             serialize_time = time.perf_counter() - start_time
 
             self.logger.info(
