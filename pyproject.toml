@@ -88,6 +88,8 @@ dependencies = [
     # Build tools (required by opencv-python-headless on some platforms)
     "cmake>=3.29.0.1,<4.2.0",
     "setuptools>=71.0.0,<81.0.0",
+    "msgpack>=1.2.1",
+    "websockets>=16.0",
 ]
 
 # Optional dependencies
