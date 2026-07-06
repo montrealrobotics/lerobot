@@ -74,8 +74,8 @@ def make_visual_feature(dataset_metadata: LeRobotDatasetMetadata, key: str) -> P
 
 
 def make_config() -> TrainPipelineConfig:
-    dataset_name = "akuramshin/robocasa_coffeepressbutton_dex_augstyle"
-    # dataset_name = "akuramshin/robocasa_coffeepressbutton-kitchen_coffee"
+    # dataset_name = "akuramshin/robocasa_coffeepressbutton_dex_augstyle"
+    dataset_name = "akuramshin/robocasa_coffeepressbutton-kitchen_coffee"
     dataset_metadata = LeRobotDatasetMetadata(dataset_name)
     action_dim = dataset_metadata.features["action"]["shape"][0]
     state_dim = dataset_metadata.features["observation.state"]["shape"][0]
@@ -84,8 +84,8 @@ def make_config() -> TrainPipelineConfig:
         dataset=DatasetConfig(repo_id=dataset_name, video_backend="pyav"),
         env=RoboCasaEnv(
             task="CoffeePressButton",
-            robot="PandaDexLeapRHOmron",
-            # robot="PandaOmron",
+            # robot="PandaDexLeapRHOmron",
+            robot="PandaOmron",
             camera_name=(
                 "robot0_agentview_left,"
                 "robot0_agentview_right,"
@@ -135,7 +135,7 @@ def make_config() -> TrainPipelineConfig:
         eval_freq=500,
         save_freq=1_000,
         log_freq=50,
-        eval=EvalConfig(n_episodes=20, batch_size=2),
+        eval=EvalConfig(n_episodes=20, n_videos=10, batch_size=5),
         batch_size=32,
         num_workers=4,
     )
