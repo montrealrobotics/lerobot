@@ -42,6 +42,7 @@ from lerobot.rl.dsrl.dsrl_config import DSRLConfig
 from lerobot.rl.dsrl.dsrl_env_wrapper import (
     DSRL_ACTION_CHUNK_RAW_REWARD,
     DSRL_ACTION_CHUNK_STEPS,
+    DSRL_ACTION_CHUNK_SUCCESS,
     DSRLEnvWrapper,
 )
 from lerobot.rl.dsrl.noise_actor import NoiseActorPolicy
@@ -90,16 +91,29 @@ def make_generate_action_chunk_fn(
     horizon: int,
     action_dim: int,
     device: torch.device,
+    noise_chunk_size: int | None = None,
 ):
     """Bundle noise reshaping + frozen-policy chunk generation + action unnormalization.
 
-    ``(stacked_obs, noise) -> action_chunk`` of shape ``(num_envs, horizon, action_dim)``.
+    ``(stacked_obs, noise) -> action_chunk`` of shape ``(num_envs, n_action_steps, action_dim)``.
+
+    If ``noise_chunk_size < horizon``, the actor only emits noise for ``noise_chunk_size``
+    steps, which is then block-duplicated up to the diffusion ``horizon`` (the DSRL-paper
+    trick for shrinking the SAC noise space: each noise vector governs a contiguous block of
+    ``horizon // noise_chunk_size`` diffusion steps). ``None`` means full horizon (no
+    reduction).
     """
     image_keys = list(frozen_policy.config.image_features)
+    noise_chunk_size = noise_chunk_size or horizon
 
     def generate_action_chunk(stacked_obs: dict[str, torch.Tensor], noise: np.ndarray) -> torch.Tensor:
         noise_tensor = torch.from_numpy(noise).float().to(device)
-        noise_tensor = noise_tensor.view(noise_tensor.shape[0], horizon, action_dim)
+        noise_tensor = noise_tensor.view(noise_tensor.shape[0], noise_chunk_size, action_dim)
+
+        if noise_chunk_size != horizon:
+            # Block-duplicate the compressed noise up to the full diffusion horizon.
+            repeats = -(-horizon // noise_chunk_size)  # ceil
+            noise_tensor = noise_tensor.repeat_interleave(repeats, dim=1)[:, :horizon]
 
         batch = dict(stacked_obs)
         if image_keys:
@@ -110,12 +124,45 @@ def make_generate_action_chunk_fn(
     return generate_action_chunk
 
 
-def make_pusht_reward_fn(success_bonus: float):
-    def reward_fn(reward: float, terminated: bool, truncated: bool, info: dict) -> float:
-        del terminated, truncated
-        return reward + (success_bonus if info.get("is_success", False) else 0.0)
+# Named primitive-step reward functions: (reward, terminated, truncated, info) -> reward.
+# Summed over the action chunk by the env wrapper. Add an entry to introduce a new reward
+# variant — no new CLI flag or branching needed; ``--reward_mode`` selects by key.
 
-    return reward_fn
+
+def _dense_reward(reward: float, terminated: bool, truncated: bool, info: dict) -> float:
+    """PushT's native coverage reward, in [0, 1]."""
+    del terminated, truncated, info
+    return reward
+
+
+def _sparse_reward(reward: float, terminated: bool, truncated: bool, info: dict) -> float:
+    """LIBERO-style sparse reward: 1.0 on the success step (also termination), else 0.0."""
+    del reward, terminated, truncated
+    return 1.0 if info.get("is_success", False) else 0.0
+
+
+REWARD_FNS = {"dense": _dense_reward, "sparse": _sparse_reward}
+
+
+# Named macro-step (per action chunk) reward functions, which override the summed primitive
+# reward. ``(raw_reward, shaped_reward, success, terminated, truncated, steps) -> reward``.
+
+
+def _goal_reward(
+    raw_reward: float, shaped_reward: float, success: bool, terminated: bool, truncated: bool, steps: int
+) -> float:
+    """DSRL's goal-reaching reward: -1 per action chunk until success, 0 on success.
+
+    Together with bootstrapping being masked at the (terminal) success step, this bounds Q
+    in [-1/(1-gamma), 0] and rewards reaching the goal in as few chunks as possible. This is
+    the formulation the reference DSRL implementation trains LIBERO with; it ignores the
+    env's own reward entirely.
+    """
+    del raw_reward, shaped_reward, terminated, truncated, steps
+    return 0.0 if success else -1.0
+
+
+MACRO_REWARD_FNS = {"goal": _goal_reward}
 
 
 def make_policy_processor_fns(frozen_policy: DiffusionPolicy, policy_path: str, device: torch.device):
@@ -197,6 +244,7 @@ def make_pusht_eval_fn(
     device: torch.device,
     n_obs_steps: int,
     noise_dim: int,
+    macro_reward_fn=None,
     num_episodes: int = 10,
     record_video: bool = True,
     num_videos: int = 3,
@@ -216,6 +264,7 @@ def make_pusht_eval_fn(
             device=str(device),
             n_obs_steps=n_obs_steps,
             reward_fn=reward_fn,
+            macro_reward_fn=macro_reward_fn,
         )
 
         total_return = 0.0
@@ -245,7 +294,7 @@ def make_pusht_eval_fn(
                 episode_shaped_return += float(shaped_reward[0])
                 episode_return += float(info[DSRL_ACTION_CHUNK_RAW_REWARD][0])
                 episode_steps += int(info[DSRL_ACTION_CHUNK_STEPS][0])
-                episode_success = episode_success or bool(_info_scalar(info, "is_success", False))
+                episode_success = episode_success or bool(info[DSRL_ACTION_CHUNK_SUCCESS][0])
                 max_coverage = max(max_coverage, float(_info_scalar(info, "coverage", 0.0)))
                 done = bool(terminated[0]) or bool(truncated[0])
 
@@ -266,7 +315,9 @@ def make_pusht_eval_fn(
                 episode_frames,
                 step,
                 fps=video_fps,
-                video_dir=Path(video_dir) if video_dir is not None else Path("outputs/dsrl_pusht/eval_videos"),
+                video_dir=Path(video_dir)
+                if video_dir is not None
+                else Path("outputs/dsrl_pusht/eval_videos"),
             )
 
         n = max(num_episodes, 1)
@@ -345,16 +396,58 @@ def main():
         "--dsrl_hidden_dim", type=int, default=1024, help="Hidden dimension for actor/critic MLPs"
     )
     parser.add_argument("--dsrl_num_layers", type=int, default=3, help="Number of actor/critic MLP layers")
-    parser.add_argument("--dsrl_num_q", type=int, default=2, help="Number of Q-networks")
+    parser.add_argument("--dsrl_num_q", type=int, default=10, help="Number of Q-networks")
+    parser.add_argument(
+        "--critic_reduction",
+        type=str,
+        default="mean",
+        choices=["mean", "min"],
+        help="How the critic ensemble is reduced. DSRL uses 'mean' over a large ensemble; "
+        "'min' is standard pessimistic SAC and underestimates Q badly at high UTD.",
+    )
+    parser.add_argument(
+        "--noise_chunk_size",
+        type=int,
+        default=0,
+        help="Compress the SAC noise space to this many steps, block-duplicated up to the "
+        "diffusion horizon (DSRL-paper trick). 0 = full horizon (no reduction).",
+    )
+    parser.add_argument(
+        "--exec_action_steps",
+        type=int,
+        default=0,
+        help="Override how many predicted actions are executed per DSRL macro-step",
+    )
     parser.add_argument(
         "--utd_ratio", type=int, default=20, help="SAC update-to-data ratio per DSRL macro step"
     )
-    parser.add_argument("--target_entropy", type=float, default=0.0, help="SAC target entropy")
     parser.add_argument(
-        "--success_bonus",
+        "--target_entropy",
         type=float,
-        default=300.0,
-        help="Terminal reward bonus added when PushT reports success.",
+        default=None,
+        help="SAC target entropy. Default (unset) uses SAC's automatic -noise_dim/2, as DSRL does.",
+    )
+    parser.add_argument(
+        "--use_backup_entropy",
+        action="store_true",
+        help="Include the entropy term in the critic's TD backup. Off by default: the reference "
+        "DSRL critic omits it.",
+    )
+    parser.add_argument(
+        "--primitive_discount",
+        type=float,
+        default=0.999,
+        help="Per-primitive-step discount. Compounded over the executed chunk to give the "
+        "macro-step discount SAC actually uses (primitive_discount ** exec_action_steps).",
+    )
+    parser.add_argument(
+        "--reward_mode",
+        type=str,
+        default="goal",
+        choices=list(REWARD_FNS) + list(MACRO_REWARD_FNS),
+        help="Named reward function. 'goal' (macro-step, DSRL's own) = -1 per action chunk until "
+        "success; 'dense' = PushT coverage reward summed over the chunk; 'sparse' = 1.0 on the "
+        "success step only.",
     )
     # WandB
     parser.add_argument("--wandb_enable", action="store_true", help="Enable WandB logging")
@@ -378,10 +471,27 @@ def main():
     horizon = frozen_policy.config.horizon
     action_dim = frozen_policy.config.action_feature.shape[0]
     n_obs_steps = frozen_policy.config.n_obs_steps
-    noise_dim = horizon * action_dim
+
+    if args.exec_action_steps > 0:
+        max_exec = horizon - n_obs_steps + 1
+        if args.exec_action_steps > max_exec:
+            raise ValueError(
+                f"--exec_action_steps ({args.exec_action_steps}) cannot exceed "
+                f"horizon - n_obs_steps + 1 = {max_exec}"
+            )
+        print(
+            f"Overriding executed action steps per macro-step: "
+            f"{frozen_policy.config.n_action_steps} -> {args.exec_action_steps}"
+        )
+        frozen_policy.config.n_action_steps = args.exec_action_steps
+
+    noise_chunk_size = args.noise_chunk_size if args.noise_chunk_size > 0 else horizon
+    if noise_chunk_size > horizon:
+        raise ValueError(f"--noise_chunk_size ({noise_chunk_size}) cannot exceed horizon ({horizon})")
+    noise_dim = noise_chunk_size * action_dim
     print(
         f"Diffusion policy: horizon={horizon}, action_dim={action_dim}, "
-        f"n_obs_steps={n_obs_steps}, noise_dim={noise_dim}"
+        f"n_obs_steps={n_obs_steps}, noise_chunk_size={noise_chunk_size}, noise_dim={noise_dim}"
     )
 
     env = _make_collect_env(PushtEnv(), args.collect_envs)
@@ -391,9 +501,21 @@ def main():
     )
     prepare_obs_fn = make_prepare_obs_fn(device, policy_preprocess_fn=policy_preprocess_fn)
     generate_action_chunk_fn = make_generate_action_chunk_fn(
-        frozen_policy, action_postprocess_fn, horizon, action_dim, device
+        frozen_policy, action_postprocess_fn, horizon, action_dim, device, noise_chunk_size=noise_chunk_size
     )
-    reward_fn = make_pusht_reward_fn(args.success_bonus)
+    # A macro-step reward (e.g. 'goal') overrides the per-primitive-step reward, so only one
+    # of the two is ever active.
+    reward_fn = REWARD_FNS.get(args.reward_mode)
+    macro_reward_fn = MACRO_REWARD_FNS.get(args.reward_mode)
+
+    # SAC discounts per macro step (one action chunk), so compound the per-primitive-step
+    # discount over the chunk to get an equivalent effective horizon.
+    exec_action_steps = frozen_policy.config.n_action_steps
+    discount = args.primitive_discount**exec_action_steps
+    print(
+        f"Discount: {args.primitive_discount} ** {exec_action_steps} executed steps = {discount:.4f} "
+        f"per macro step"
+    )
 
     wandb_kwargs = None
     if args.wandb_enable:
@@ -410,6 +532,7 @@ def main():
             prepare_obs_fn=prepare_obs_fn,
             generate_action_chunk_fn=generate_action_chunk_fn,
             reward_fn=reward_fn,
+            macro_reward_fn=macro_reward_fn,
             device=device,
             n_obs_steps=n_obs_steps,
             noise_dim=noise_dim,
@@ -426,8 +549,11 @@ def main():
         state_latent_dim=args.dsrl_state_latent,
         hidden_dims=tuple([args.dsrl_hidden_dim] * args.dsrl_num_layers),
         num_q_heads=args.dsrl_num_q,
+        critic_reduction=args.critic_reduction,
         utd_ratio=args.utd_ratio,
+        discount=discount,
         target_entropy=args.target_entropy,
+        use_backup_entropy=args.use_backup_entropy,
         log_freq=args.log_freq,
         save_freq=args.save_freq,
         eval_freq=args.eval_freq,
@@ -439,6 +565,7 @@ def main():
         prepare_obs_fn=prepare_obs_fn,
         generate_action_chunk_fn=generate_action_chunk_fn,
         reward_fn=reward_fn,
+        macro_reward_fn=macro_reward_fn,
         total_steps=args.total_steps,
         device=str(device),
         n_obs_steps=n_obs_steps,

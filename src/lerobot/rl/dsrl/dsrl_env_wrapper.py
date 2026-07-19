@@ -42,10 +42,14 @@ DSRL_ACTION_CHUNK_STEPS = "dsrl_action_chunk_steps"
 DSRL_ACTION_CHUNK_INTERRUPTED = "dsrl_action_chunk_interrupted"
 DSRL_ACTION_CHUNK_RAW_REWARD = "dsrl_action_chunk_raw_reward"
 DSRL_ACTION_CHUNK_SHAPED_REWARD = "dsrl_action_chunk_shaped_reward"
+DSRL_ACTION_CHUNK_SUCCESS = "dsrl_action_chunk_success"
 
 PrepareObsFn = Callable[[dict], dict[str, Tensor]]
 GenerateActionChunkFn = Callable[[dict[str, Tensor], np.ndarray], Tensor]
 RewardFn = Callable[[float, bool, bool, dict], float]
+# (raw_reward, shaped_reward, success, terminated, truncated, steps) -> macro reward, where
+# the first two arguments are already accumulated over the chunk's primitive steps.
+MacroRewardFn = Callable[[float, float, bool, bool, bool, int], float]
 
 
 class DSRLEnvWrapper:
@@ -66,7 +70,11 @@ class DSRLEnvWrapper:
             format (e.g. diffusion policies). Supply a distinct transform for VLAs that need
             extra inputs such as language tokens (e.g. pi0).
         reward_fn: Optional primitive-step reward shaping ``(reward, terminated, truncated,
-            info) -> reward`` applied per env.
+            info) -> reward`` applied per env. The result is summed over the chunk.
+        macro_reward_fn: Optional macro-step reward, applied per env *after* the chunk has
+            run and overriding the summed primitive reward. Use this for rewards that are
+            only defined at the macro-step level — e.g. DSRL's goal-reaching reward of -1
+            per chunk until success. Receives the chunk-accumulated raw and shaped rewards.
     """
 
     def __init__(
@@ -79,6 +87,7 @@ class DSRLEnvWrapper:
         n_obs_steps: int = 1,
         prepare_frozen_obs_fn: PrepareObsFn | None = None,
         reward_fn: RewardFn | None = None,
+        macro_reward_fn: MacroRewardFn | None = None,
     ):
         if not isinstance(env, gym.vector.VectorEnv):
             raise TypeError(
@@ -98,6 +107,7 @@ class DSRLEnvWrapper:
         self._prepare_frozen_obs_fn = prepare_frozen_obs_fn
         self._frozen_shares_obs = prepare_frozen_obs_fn is None
         self._reward_fn = reward_fn
+        self._macro_reward_fn = macro_reward_fn
 
         self.single_action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(noise_dim,), dtype=np.float32)
         self.action_space = gym.spaces.Box(
@@ -107,15 +117,48 @@ class DSRLEnvWrapper:
         self._has_reset = False
         self._obs_window: deque[dict[str, Tensor]] = deque(maxlen=n_obs_steps)
 
-    def reset(self, **kwargs) -> tuple[dict[str, Tensor], dict]:
-        """Reset the env and return the noise-actor observation (current frame)."""
-        batched_obs, info = self.env.reset(**kwargs)
-        self._has_reset = True
+    def reset(self, env_mask: np.ndarray | None = None, **kwargs) -> tuple[dict[str, Tensor], dict]:
+        """Reset the env and return the noise-actor observation (current frame).
 
+        Args:
+            env_mask: Optional boolean mask of shape ``(num_envs,)`` selecting which
+                sub-envs to reset. Envs left out keep their current observation and their
+                observation history, so in-flight episodes survive. ``None`` resets all.
+        """
+        if env_mask is not None:
+            env_mask = np.asarray(env_mask, dtype=bool).reshape(self.num_envs)
+            if not env_mask.any():
+                raise ValueError("env_mask must select at least one env to reset.")
+            if env_mask.all():
+                env_mask = None
+
+        if env_mask is None:
+            batched_obs, info = self.env.reset(**kwargs)
+        else:
+            options = dict(kwargs.pop("options", None) or {})
+            options["reset_mask"] = env_mask
+            batched_obs, info = self.env.reset(options=options, **kwargs)
+
+        self._has_reset = True
         policy_obs, frozen_obs = self._prepare(batched_obs)
-        self._obs_window.clear()
-        for _ in range(self.n_obs_steps):
-            self._obs_window.append(frozen_obs)
+
+        if env_mask is None:
+            # Prime the history with n_obs_steps copies of the initial frame. Each slot gets
+            # its own dict so the per-env merge below can never alias across timesteps.
+            self._obs_window.clear()
+            for _ in range(self.n_obs_steps):
+                self._obs_window.append({key: value.clone() for key, value in frozen_obs.items()})
+        else:
+            # Only the reset envs get their history overwritten with the fresh frame.
+            index = torch.from_numpy(env_mask).to(self.device)
+            merged: list[dict[str, Tensor]] = []
+            for past_obs in self._obs_window:
+                slot = {key: value.clone() for key, value in past_obs.items()}
+                for key, value in frozen_obs.items():
+                    slot[key][index] = value[index]
+                merged.append(slot)
+            self._obs_window.clear()
+            self._obs_window.extend(merged)
 
         return policy_obs, info
 
@@ -143,6 +186,7 @@ class DSRLEnvWrapper:
         raw_rewards = np.zeros(self.num_envs, dtype=np.float32)
         shaped_rewards = np.zeros(self.num_envs, dtype=np.float32)
         executed_steps = np.zeros(self.num_envs, dtype=np.int64)
+        successes = np.zeros(self.num_envs, dtype=bool)
         terminated = np.zeros(self.num_envs, dtype=bool)
         truncated = np.zeros(self.num_envs, dtype=bool)
         info: dict = {}
@@ -156,6 +200,7 @@ class DSRLEnvWrapper:
 
             raw_rewards += reward
             shaped_rewards += self._shape_rewards(reward, terminated, truncated, info)
+            successes |= self._read_successes(info)
             executed_steps += 1
 
             policy_obs, frozen_obs = self._prepare(observation)
@@ -166,13 +211,38 @@ class DSRLEnvWrapper:
         if policy_obs is None:
             raise RuntimeError("Action chunk did not execute any primitive steps.")
 
+        macro_rewards = shaped_rewards
+        if self._macro_reward_fn is not None:
+            macro_rewards = np.asarray(
+                [
+                    self._macro_reward_fn(
+                        float(raw_rewards[idx]),
+                        float(shaped_rewards[idx]),
+                        bool(successes[idx]),
+                        bool(terminated[idx]),
+                        bool(truncated[idx]),
+                        int(executed_steps[idx]),
+                    )
+                    for idx in range(self.num_envs)
+                ],
+                dtype=np.float32,
+            )
+
         info = dict(info)
         info[DSRL_ACTION_CHUNK_STEPS] = executed_steps
         info[DSRL_ACTION_CHUNK_INTERRUPTED] = executed_steps < action_chunk_np.shape[1]
         info[DSRL_ACTION_CHUNK_RAW_REWARD] = raw_rewards
         info[DSRL_ACTION_CHUNK_SHAPED_REWARD] = shaped_rewards
+        info[DSRL_ACTION_CHUNK_SUCCESS] = successes
 
-        return policy_obs, shaped_rewards, terminated, truncated, info
+        return policy_obs, macro_rewards, terminated, truncated, info
+
+    def _read_successes(self, info: dict) -> np.ndarray:
+        """Per-env ``is_success`` flags for one primitive step, defaulting to False."""
+        successes = np.zeros(self.num_envs, dtype=bool)
+        for idx in range(self.num_envs):
+            successes[idx] = bool(_select_info(info, idx, self.num_envs).get("is_success", False))
+        return successes
 
     def close(self):
         self.env.close()

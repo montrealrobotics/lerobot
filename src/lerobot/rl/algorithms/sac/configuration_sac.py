@@ -62,6 +62,13 @@ class SACAlgorithmConfig(RLAlgorithmConfig):
     num_critics: int = 2
     # Number of subsampled critics for training
     num_subsample_critics: int | None = None
+    # How the critic ensemble is reduced to a single Q value in the TD target and the
+    # actor loss: ``"min"`` or ``"mean"``. ``"min"`` is the standard pessimistic SAC
+    # estimate. ``"mean"`` trades pessimism for lower variance and is what DSRL uses
+    # together with a large ensemble (``num_critics=10``) to stay stable at high
+    # ``utd_ratio``. Typed as ``str`` rather than ``Literal`` because draccus cannot decode
+    # ``Literal`` fields.
+    critic_reduction: str = "min"
     # Configuration for the critic network architecture
     critic_network_kwargs: CriticNetworkConfig = field(default_factory=CriticNetworkConfig)
     # Configuration for the discrete critic network

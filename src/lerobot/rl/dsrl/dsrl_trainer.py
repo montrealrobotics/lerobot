@@ -19,6 +19,7 @@ from lerobot.rl.dsrl.dsrl_env_wrapper import (
     DSRL_ACTION_CHUNK_RAW_REWARD,
     DSRL_ACTION_CHUNK_STEPS,
     DSRLEnvWrapper,
+    MacroRewardFn,
 )
 from lerobot.rl.dsrl.noise_actor import (
     LightweightNoiseActorPolicy,
@@ -36,6 +37,7 @@ def train_dsrl(
     *,
     prepare_frozen_obs_fn: Callable[[dict], dict[str, torch.Tensor]] | None = None,
     reward_fn: Callable[[float, bool, bool, dict], float] | None = None,
+    macro_reward_fn: MacroRewardFn | None = None,
     total_steps: int = 500_000,
     device: str = "cuda",
     n_obs_steps: int = 1,
@@ -56,6 +58,8 @@ def train_dsrl(
         prepare_frozen_obs_fn: Optional raw env obs → frozen-policy observation, when it
             differs from the noise-actor observation (e.g. VLAs needing language tokens).
         reward_fn: Optional primitive-step reward shaping function.
+        macro_reward_fn: Optional macro-step (per action chunk) reward, overriding the
+            primitive rewards summed over the chunk.
         dsrl_config: DSRL hyperparameters (encoders, Q-networks, training).
         wandb_kwargs: Optional ``{"enable": True, "project": "...", "name": "..."}``.
         eval_fn: Optional ``(noise_actor, step) -> {"metric": float}``.
@@ -110,6 +114,7 @@ def train_dsrl(
         n_obs_steps=n_obs_steps,
         prepare_frozen_obs_fn=prepare_frozen_obs_fn,
         reward_fn=reward_fn,
+        macro_reward_fn=macro_reward_fn,
     )
     num_collect_envs = dsrl_env.num_envs
 
@@ -144,12 +149,14 @@ def train_dsrl(
     # Build SAC algorithm
     algo_cfg = SACAlgorithmConfig.from_policy_config(noise_actor_cfg)
     algo_cfg.num_critics = dsrl_cfg.num_q_heads
+    algo_cfg.critic_reduction = dsrl_cfg.critic_reduction
     algo_cfg.actor_lr = dsrl_cfg.actor_lr
     algo_cfg.critic_lr = dsrl_cfg.critic_lr
     algo_cfg.temperature_lr = dsrl_cfg.temperature_lr
     algo_cfg.utd_ratio = dsrl_cfg.utd_ratio
     algo_cfg.discount = dsrl_cfg.discount
     algo_cfg.target_entropy = dsrl_cfg.target_entropy
+    algo_cfg.use_backup_entropy = dsrl_cfg.use_backup_entropy
     algo_cfg.critic_target_update_weight = dsrl_cfg.critic_target_update_weight
     algo_cfg.policy_update_freq = dsrl_cfg.policy_update_freq
     algo_cfg.critic_network_kwargs = CriticNetworkConfig(
@@ -188,8 +195,15 @@ def train_dsrl(
 
     env_step = 0
     while env_step < total_steps:
-        with torch.no_grad():
-            noise_tensor = noise_actor.select_action(policy_obs)
+        # Until the buffer is warm, draw noise from the frozen policy's own prior N(0, 1)
+        # rather than from the untrained actor, whose tanh squash bounds it to [-1, 1] and
+        # so puts the warmup data off-distribution for the diffusion model.
+        warming_up = dsrl_cfg.gaussian_warmup and len(buffer) < dsrl_cfg.min_buffer_size
+        if warming_up:
+            noise_tensor = torch.randn(num_collect_envs, noise_dim, device=device)
+        else:
+            with torch.no_grad():
+                noise_tensor = noise_actor.select_action(policy_obs)
         noise_np = noise_tensor.cpu().numpy().reshape(num_collect_envs, noise_dim)
 
         next_policy_obs, shaped_reward, done, truncated, info = dsrl_env.step(noise_np)
@@ -250,10 +264,12 @@ def train_dsrl(
             )
 
         if finished.any():
-            policy_obs, _ = dsrl_env.reset()
-            episode_raw_rewards.fill(0.0)
-            episode_shaped_rewards.fill(0.0)
-            episode_steps.fill(0)
+            # Reset only the envs that ended; the others keep their in-flight episode and
+            # their observation history.
+            policy_obs, _ = dsrl_env.reset(env_mask=finished)
+            episode_raw_rewards[finished] = 0.0
+            episode_shaped_rewards[finished] = 0.0
+            episode_steps[finished] = 0
 
         # Train SAC
         if len(buffer) >= dsrl_cfg.min_buffer_size:
