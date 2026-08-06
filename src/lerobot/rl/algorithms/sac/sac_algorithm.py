@@ -263,6 +263,8 @@ class SACAlgorithm(RLAlgorithm):
             stats.grad_norms["actor"] = actor_grad
             stats.grad_norms["temperature"] = temp_grad
             stats.extra["temperature"] = self.temperature
+            stats.extra["entropy"] = self._last_entropy
+            stats.extra["target_entropy"] = float(self.target_entropy)
 
         self._update_target_networks()
         self._optimization_step += 1
@@ -405,6 +407,10 @@ class SACAlgorithm(RLAlgorithm):
         observation_features = batch.get("observation_feature")
 
         actions_pi, log_probs, _ = self.policy.actor(observations, observation_features)
+        # Policy entropy estimate (nats). Compare against ``target_entropy`` to see whether
+        # the temperature has driven exploration to target; if it plateaus well above target,
+        # the policy is over-exploring (std too large).
+        self._last_entropy = (-log_probs.mean()).item()
 
         q_preds = self._critic_forward(
             observations=observations,

@@ -137,11 +137,19 @@ class NoiseActorPolicy(PreTrainedPolicy):
         )
 
     @torch.no_grad()
-    def select_action(self, batch: dict[str, Tensor]) -> Tensor:
+    def select_action(self, batch: dict[str, Tensor], deterministic: bool = False) -> Tensor:
+        """Return a noise vector for the given observation.
+
+        ``deterministic=False`` (training) samples from the actor's Gaussian for exploration.
+        ``deterministic=True`` (evaluation) returns the distribution's mode — ``tanh(mean)``
+        when the actor is tanh-squashed.
+        """
         observations_features = None
         if self.shared_encoder and self.actor.encoder.has_images:
             observations_features = self.actor.encoder.get_cached_image_features(batch)
-        actions, _, _ = self.actor(batch, observations_features)
+        actions, _, means = self.actor(batch, observations_features)
+        if deterministic:
+            return torch.tanh(means) if self.actor.use_tanh_squash else means
         return actions
 
     def forward(self, batch: dict[str, Tensor | dict[str, Tensor]]) -> dict[str, Tensor]:

@@ -183,6 +183,7 @@ def train_dsrl(
     episode_steps = np.zeros(num_collect_envs, dtype=np.int64)
     episode_count = 0
     training_step = 0
+    nonfinite_transitions = 0
 
     # Track rolling episode stats for WandB / console
     recent_raw_returns: deque[float] = deque(maxlen=10)
@@ -215,7 +216,31 @@ def train_dsrl(
         collected_steps = int(primitive_steps.sum())
         env_step += collected_steps
 
+        # Guard against non-finite observations/rewards
+        nonfinite = np.array(
+            [
+                not (
+                    _obs_is_finite(_slice_batch(policy_obs, i))
+                    and _obs_is_finite(_slice_batch(next_policy_obs, i))
+                    and bool(np.isfinite(shaped_rewards[i]))
+                )
+                for i in range(num_collect_envs)
+            ],
+            dtype=bool,
+        )
+        if nonfinite.any():
+            nonfinite_transitions += int(nonfinite.sum())
+            print(
+                f"[warning] non-finite observation/reward at env_step={env_step} "
+                f"(envs={np.flatnonzero(nonfinite).tolist()}); dropping transition and resetting. "
+                f"Total dropped so far: {nonfinite_transitions}."
+            )
+            if wandb_run is not None:
+                wandb_run.log({"buffer/nonfinite_dropped": nonfinite_transitions}, step=env_step)
+
         for env_idx in range(num_collect_envs):
+            if nonfinite[env_idx]:
+                continue
             buffer.add(
                 state=_slice_batch(policy_obs, env_idx),
                 action=noise_tensor[env_idx : env_idx + 1],
@@ -230,7 +255,8 @@ def train_dsrl(
         episode_shaped_rewards += shaped_rewards
         episode_steps += primitive_steps
 
-        finished = dones | truncateds
+        # Treat a non-finite env as finished so it is reset below, refreshing its observation.
+        finished = dones | truncateds | nonfinite
         for finished_env_idx in np.flatnonzero(finished):
             episode_count += 1
             episode_raw_reward = float(episode_raw_rewards[finished_env_idx])
@@ -348,3 +374,8 @@ def _as_bool_batch(value, batch_size: int) -> np.ndarray:
 
 def _slice_batch(batch: dict[str, torch.Tensor], index: int) -> dict[str, torch.Tensor]:
     return {key: value[index : index + 1] for key, value in batch.items()}
+
+
+def _obs_is_finite(obs: dict[str, torch.Tensor]) -> bool:
+    """True if every tensor in the observation is finite (no NaN/inf)."""
+    return all(torch.isfinite(value).all().item() for value in obs.values())
