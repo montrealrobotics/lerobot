@@ -24,7 +24,10 @@ Usage:
 """
 
 import datetime as dt
+import os
 from pathlib import Path
+
+import robosuite
 
 from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.configs.default import DatasetConfig, EvalConfig, WandBConfig
@@ -38,6 +41,12 @@ from lerobot.utils.import_utils import register_third_party_plugins
 
 PI05_BASE_MODEL = "lerobot/pi05_base"
 ROBOCASA_DEX_EMBODIMENT_ID = 31
+# Eval control mode must match the collected/trained action representation. This dataset is
+# collected + relabeled to absolute joint targets, so evaluate with the JOINT_POSITION controller.
+XARM6_JOINT_POS_CONTROLLER = os.path.join(
+    os.path.dirname(robosuite.__file__),
+    "controllers/config/robots/default_xarm6dexleaprhomron_joint_pos.json",
+)
 SCRATCH_OUTPUT_ROOT = Path("/network/scratch/a/artur.kuramshin/lerobot/outputs/train")
 WRIST_IMAGE_KEY = "observation.images.robot0_eye_in_hand"
 EXTERNAL_IMAGE_KEY = "observation.images.robot0_agentview_left"
@@ -84,8 +93,10 @@ def make_config() -> TrainPipelineConfig:
         dataset=DatasetConfig(repo_id=dataset_name, video_backend="pyav"),
         env=RoboCasaEnv(
             task="CoffeePressButton",
-            robot="PandaDexLeapRHOmron",
+            robot="XArm6DexLeapRHOmron",
+            # robot="PandaDexLeapRHOmron",
             # robot="PandaOmron",
+            controller=XARM6_JOINT_POS_CONTROLLER,  # joint-position eval to match trained actions
             camera_name=(
                 "robot0_agentview_left,"
                 "robot0_agentview_right,"
