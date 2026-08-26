@@ -263,10 +263,22 @@ class SACAlgorithm(RLAlgorithm):
             stats.grad_norms["actor"] = actor_grad
             stats.grad_norms["temperature"] = temp_grad
             stats.extra["temperature"] = self.temperature
+            stats.extra["entropy"] = self._last_entropy
+            stats.extra["target_entropy"] = float(self.target_entropy)
 
         self._update_target_networks()
         self._optimization_step += 1
         return stats
+
+    def _reduce_critics(self, q_values: Tensor) -> Tensor:
+        """Reduce an ensemble of Q values ``(num_critics, batch)`` to ``(batch,)``."""
+        if self.config.critic_reduction == "min":
+            return q_values.min(dim=0)[0]
+        if self.config.critic_reduction == "mean":
+            return q_values.mean(dim=0)
+        raise ValueError(
+            f"Unknown critic_reduction {self.config.critic_reduction!r}; expected 'min' or 'mean'."
+        )
 
     def _compute_loss_critic(self, batch: dict[str, Any]) -> Tensor:
         # Extract common components from batch
@@ -300,11 +312,11 @@ class SACAlgorithm(RLAlgorithm):
                 q_targets = q_targets[indices]
 
             # critics subsample size
-            min_q, _ = q_targets.min(dim=0)  # Get values from min operation
+            next_q = self._reduce_critics(q_targets)
             if self.config.use_backup_entropy:
-                min_q = min_q - (self.temperature * next_log_probs)
+                next_q = next_q - (self.temperature * next_log_probs)
 
-            td_target = rewards + (1 - done) * self.config.discount * min_q
+            td_target = rewards + (1 - done) * self.config.discount * next_q
 
         # 3- compute predicted qs
         if self.policy_config.num_discrete_actions is not None:
@@ -395,6 +407,10 @@ class SACAlgorithm(RLAlgorithm):
         observation_features = batch.get("observation_feature")
 
         actions_pi, log_probs, _ = self.policy.actor(observations, observation_features)
+        # Policy entropy estimate (nats). Compare against ``target_entropy`` to see whether
+        # the temperature has driven exploration to target; if it plateaus well above target,
+        # the policy is over-exploring (std too large).
+        self._last_entropy = (-log_probs.mean()).item()
 
         q_preds = self._critic_forward(
             observations=observations,
@@ -402,9 +418,9 @@ class SACAlgorithm(RLAlgorithm):
             use_target=False,
             observation_features=observation_features,
         )
-        min_q_preds = q_preds.min(dim=0)[0]
+        q_preds = self._reduce_critics(q_preds)
 
-        actor_loss = ((self.temperature * log_probs) - min_q_preds).mean()
+        actor_loss = ((self.temperature * log_probs) - q_preds).mean()
         return actor_loss
 
     def _compute_loss_temperature(self, batch: dict[str, Any]) -> Tensor:

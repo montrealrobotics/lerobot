@@ -141,12 +141,25 @@ def get_robocasa_zero_action(env):
         zero_action_dict["base_mode"] = -1
         zero_action_dict["base"] = np.zeros(3)
         zero_action = active_robot.create_action_vector(zero_action_dict)
-    elif robot_name == "PandaDexLeapRHOmron" or env.action_dim == 27:
-        # PandaDexLeapRHOmron action layout:
-        # [right(6), right_gripper(16), base(3), torso(1), base_mode(1)] = 27
+    elif robot_name in ("PandaDexLeapRHOmron", "XArm6DexLeapRHOmron") or env.action_dim == 27:
+        # LEAP-hand mobile action layout:
+        #   [arm(6), right_gripper(16), base(3), torso(1), base_mode(1)] = 27
+        # The arm slice is 6 for both OSC_POSE (pose delta) and the 6-DOF xArm6 JOINT_POSITION
+        # controller.
         assert len(env.robots) == 1, "Only one robot is supported in this function"
+        arm = "right"
+        arm_ctrl = active_robot.part_controllers[arm]
+        n_arm = arm_ctrl.control_dim
+        if arm_ctrl.input_type == "absolute":
+            if arm_ctrl.name != "JOINT_POSITION":
+                raise NotImplementedError(
+                    f"Zero/hold action for absolute '{arm_ctrl.name}' controller is not supported."
+                )
+            arm_action = env.sim.data.qpos[active_robot._ref_joint_pos_indexes[:n_arm]].copy()
+        else:
+            arm_action = np.zeros(n_arm)
         zero_action_dict = {
-            "right": np.zeros(6),
+            "right": arm_action,
             "right_gripper": np.zeros(16),
             "base": np.zeros(3),
             "torso": np.zeros(1),
@@ -165,6 +178,7 @@ def get_robocasa_zero_action(env):
 # obs_state_dim = arm_joints + gripper/hand_joints
 # For PandaOmron: 7 arm + 1 gripper (take [:1] from 2-dim gripper_qpos) = 8
 # For PandaDexLeapRHOmron: 7 arm + 16 hand = 23
+# For XArm6DexLeapRHOmron: 6 arm + 16 hand = 22
 ROBOT_CONFIGS = {
     "PandaOmron": {
         "obs_state_dim": 8,
@@ -172,6 +186,10 @@ ROBOT_CONFIGS = {
     },
     "PandaDexLeapRHOmron": {
         "obs_state_dim": 23,
+        "gripper_qpos_slice": slice(None),  # take all 16 hand joints
+    },
+    "XArm6DexLeapRHOmron": {
+        "obs_state_dim": 22,
         "gripper_qpos_slice": slice(None),  # take all 16 hand joints
     },
 }
@@ -234,6 +252,7 @@ class RoboCasaEnv(gym.Env):
         ep_meta: dict | None = None,
         seed: int = 0,
         return_raw_obs: bool = False,
+        controller: str | None = None,
         **env_kwargs,
     ):
         """
@@ -294,11 +313,17 @@ class RoboCasaEnv(gym.Env):
         # Using EnvArgs(controller="OSC_POSE") would go through refactor_composite_controller_config
         # which strips `use_action_scaling: false` from the gripper config, causing a mismatch
         # between data collection and evaluation.
+        #
+        # `controller` selects the control mode and MUST match what the policy was trained on:
+        #   - None  -> the robot's default controller (OSC_POSE for our robots)
+        #   - a path to a composite-controller .json (e.g. default_xarm6dexleaprhomron_joint_pos.json)
+        #     to evaluate a policy trained on joint-position actions.
         from robosuite.controllers.composite.composite_controller_factory import (
             load_composite_controller_config,
         )
 
-        controller_configs = load_composite_controller_config(robot=robot)
+        self.controller = controller
+        controller_configs = load_composite_controller_config(controller=controller, robot=robot)
 
         env_args = EnvArgs(
             env_name=task_name,
