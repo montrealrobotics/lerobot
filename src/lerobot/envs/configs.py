@@ -642,7 +642,11 @@ class VLABenchEnv(EnvConfig):
 @dataclass
 class RoboCasaEnv(EnvConfig):
     task: str | None = None  # Task name (required)
-    robot: str = "PandaDexLeapRHOmron"  # "PandaOmron" or "PandaDexLeapRHOmron"
+    robot: str = "PandaDexLeapRHOmron"  # "PandaOmron", "PandaDexLeapRHOmron", or "XArm6DexLeapRHOmron"
+    # Control mode for evaluation. MUST match the action representation the policy was trained on.
+    #   None -> robot default controller (OSC_POSE).
+    #   path to a composite-controller .json -> e.g. a *_joint_pos.json for joint-position policies.
+    controller: str | None = None
     fps: int = 20
     episode_length: int | None = None  # set inside the env for each task
     obs_type: str = "pixels_agent_pos"
@@ -680,6 +684,7 @@ class RoboCasaEnv(EnvConfig):
         _robot_dims = {
             "PandaOmron": {"action": 7, "state": 8},
             "PandaDexLeapRHOmron": {"action": 22, "state": 23},
+            "XArm6DexLeapRHOmron": {"action": 22, "state": 22},  # 6 arm + 16 hand
         }
         dims = _robot_dims.get(self.robot)
         if dims is None:
@@ -724,6 +729,7 @@ class RoboCasaEnv(EnvConfig):
     def gym_kwargs(self) -> dict:
         return {
             "robot": self.robot,
+            "controller": self.controller,
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
             "observation_width": self.observation_width,
