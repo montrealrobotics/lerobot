@@ -97,6 +97,7 @@ def make_config() -> TrainPipelineConfig:
             # robot="PandaDexLeapRHOmron",
             # robot="PandaOmron",
             controller=XARM6_JOINT_POS_CONTROLLER,  # joint-position eval to match trained actions
+            fps=30,  # quest_rokoko collection runs at 30 Hz; eval control_freq must match
             camera_name=(
                 "robot0_agentview_left,"
                 "robot0_agentview_right,"

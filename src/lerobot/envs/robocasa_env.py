@@ -253,6 +253,7 @@ class RoboCasaEnv(gym.Env):
         seed: int = 0,
         return_raw_obs: bool = False,
         controller: str | None = None,
+        control_freq: int = 20,
         **env_kwargs,
     ):
         """
@@ -325,11 +326,15 @@ class RoboCasaEnv(gym.Env):
         self.controller = controller
         controller_configs = load_composite_controller_config(controller=controller, robot=robot)
 
+        self.control_freq = control_freq
+        self.metadata = {**RoboCasaEnv.metadata, "render_fps": control_freq}
+
         env_args = EnvArgs(
             env_name=task_name,
             robots=robot,
             controller=None,  # not used when controller_configs is provided
             controller_configs=controller_configs,
+            control_freq=control_freq,
             has_renderer=(render_mode == "human"),
             has_offscreen_renderer=(render_mode == "rgb_array"),
             use_camera_obs=(render_mode == "rgb_array"),
