@@ -730,6 +730,7 @@ class RoboCasaEnv(EnvConfig):
         return {
             "robot": self.robot,
             "controller": self.controller,
+            "control_freq": self.fps,  # eval control rate must match the dataset's collection rate
             "obs_type": self.obs_type,
             "render_mode": self.render_mode,
             "observation_width": self.observation_width,

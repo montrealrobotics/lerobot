@@ -84,7 +84,7 @@ def make_visual_feature(dataset_metadata: LeRobotDatasetMetadata, key: str) -> P
 
 def make_config() -> TrainPipelineConfig:
     # dataset_name = "akuramshin/robocasa_coffeepressbutton_dex_augstyle"
-    dataset_name = "akuramshin/robocasa_coffeepressbutton-kitchen_coffee"
+    dataset_name = "akuramshin/robocasa_lightbulbscrew_dex_filtered"
     dataset_metadata = LeRobotDatasetMetadata(dataset_name)
     action_dim = dataset_metadata.features["action"]["shape"][0]
     state_dim = dataset_metadata.features["observation.state"]["shape"][0]
@@ -92,11 +92,12 @@ def make_config() -> TrainPipelineConfig:
     cfg = TrainPipelineConfig(
         dataset=DatasetConfig(repo_id=dataset_name, video_backend="pyav"),
         env=RoboCasaEnv(
-            task="CoffeePressButton",
+            task="ScrewLightbulb",
             robot="XArm6DexLeapRHOmron",
             # robot="PandaDexLeapRHOmron",
             # robot="PandaOmron",
             controller=XARM6_JOINT_POS_CONTROLLER,  # joint-position eval to match trained actions
+            fps=30,  # quest_rokoko collection runs at 30 Hz; eval control_freq must match
             camera_name=(
                 "robot0_agentview_left,"
                 "robot0_agentview_right,"
@@ -142,11 +143,11 @@ def make_config() -> TrainPipelineConfig:
             optimizer_grad_clip_norm=1.0,
         ),
         wandb=WandBConfig(enable=True, project="lerobot-dex"),
-        steps=10_000,
-        eval_freq=500,
+        steps=20_000,
+        eval_freq=1_000,
         save_freq=1_000,
-        log_freq=50,
-        eval=EvalConfig(n_episodes=20, n_videos=10, batch_size=5),
+        log_freq=100,
+        eval=EvalConfig(n_episodes=20, n_videos=5, batch_size=2),
         batch_size=32,
         num_workers=4,
     )
