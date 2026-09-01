@@ -60,7 +60,7 @@ import torch
 from lerobot.envs.configs import RoboCasaEnv
 from lerobot.envs.factory import make_env
 from lerobot.envs.utils import preprocess_observation
-from lerobot.policies.pi05.modeling_pi05 import PI05Policy
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.rl.dsrl import train_dsrl
 from lerobot.rl.dsrl.dsrl_config import DSRLConfig
 from lerobot.rl.dsrl.dsrl_env_wrapper import (
@@ -90,6 +90,67 @@ def _make_collect_env(env_cfg: RoboCasaEnv, num_envs: int):
         raise ValueError("--collect_envs must be >= 1")
     envs = make_env(env_cfg, n_envs=num_envs, use_async_envs=False)
     return envs[env_cfg.type][0]
+
+
+def _register_literal_draccus_decoder() -> None:
+    """Teach draccus to decode ``typing.Literal`` fields (passthrough; the dataclass's own
+    ``__post_init__`` validates the value).
+
+    ``PreTrainedConfig.from_pretrained`` decodes the saved config with draccus, which has no
+    built-in ``Literal`` decoder. pi05 checkpoints happen to omit their ``Literal`` fields
+    (defaults), but SmolVLA checkpoints save them (e.g. ``category_specific_action_proj_type``),
+    so loading one raises "No decoding function for type typing.Literal". This registration is a
+    no-op if the value is already a plain str/int.
+    """
+    import typing
+
+    import draccus
+
+    draccus.decode.register(typing.Literal, lambda raw_value, path=(): raw_value)
+
+
+def load_frozen_policy(policy_path: str) -> PreTrainedPolicy:
+    """Load any flow-matching VLA (pi05, SmolVLA, ...) by auto-detecting its config type.
+
+    DSRL only needs the policy's ``predict_action_chunk(batch, noise=...)`` seam, which pi05
+    and SmolVLA share, so the example is policy-agnostic: it dispatches on the checkpoint's
+    registered config type.
+
+    LoRA/PEFT adapter checkpoints (``adapter_config.json`` present) are loaded by rebuilding
+    the finetuned policy on its base weights and applying the adapter — which brings both the
+    LoRA deltas and any fully-trained modules saved via ``modules_to_save`` (e.g. the flow
+    action expert in ``*_expert_full_ft`` runs) — then merging for frozen inference. This
+    mirrors ``lerobot.policies.factory.make_policy``'s PEFT branch, reusing its ``get_policy_class``
+    dispatch and the ``peft`` primitives.
+    """
+    import json
+
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.policies.factory import get_policy_class
+
+    _register_literal_draccus_decoder()
+    # Read the type first so get_policy_class imports the module, registering the config
+    # subclass with PreTrainedConfig's choice registry before we decode.
+    with open(os.path.join(policy_path, "config.json")) as f:
+        policy_type = json.load(f)["type"]
+    policy_cls = get_policy_class(policy_type)
+    cfg = PreTrainedConfig.from_pretrained(policy_path)
+
+    if not os.path.exists(os.path.join(policy_path, "adapter_config.json")):
+        print(f"Loading '{cfg.type}' policy from {policy_path} ...")
+        return policy_cls.from_pretrained(policy_path)
+
+    from peft import PeftConfig, PeftModel
+
+    peft_config = PeftConfig.from_pretrained(policy_path)
+    base = peft_config.base_model_name_or_path
+    if not base:
+        raise ValueError(f"{policy_path}: adapter_config has no base_model_name_or_path to build on.")
+    print(f"Loading '{cfg.type}' LoRA checkpoint (base={base}); applying + merging adapter ...")
+    # Build the finetuned architecture (cfg) on the base weights, then layer the adapter on top.
+    base_policy = policy_cls.from_pretrained(pretrained_name_or_path=base, config=cfg)
+    peft_policy = PeftModel.from_pretrained(base_policy, policy_path, config=peft_config)
+    return peft_policy.merge_and_unload()
 
 
 # ── Observation adapters ────────────────────────────────────────────────────────────
@@ -164,7 +225,7 @@ def make_prepare_frozen_obs_fn(
 
 
 def make_generate_action_chunk_fn(
-    frozen_policy: PI05Policy,
+    frozen_policy: PreTrainedPolicy,
     postprocessor,
     noise_chunk_size: int,
     full_chunk_size: int,
@@ -255,6 +316,8 @@ def _make_single_robocasa_env(env_cfg: RoboCasaEnv, seed: int):
     return RoboCasaGymEnv(
         task_name=env_cfg.task,
         robot=env_cfg.robot,
+        controller=env_cfg.controller,
+        control_freq=env_cfg.fps,
         camera_name=env_cfg.camera_name,
         obs_type=env_cfg.obs_type,
         render_mode=env_cfg.render_mode,
@@ -453,6 +516,21 @@ def main():
     )
     parser.add_argument("--cameras", type=str, default=DEFAULT_CAMERAS, help="Comma-separated camera names")
     parser.add_argument(
+        "--controller",
+        type=str,
+        default=None,
+        help="Path to a composite-controller .json. Must match what the policy was trained on: "
+        "None = the robot's default (OSC_POSE); a *_joint_pos.json for joint-position policies "
+        "(e.g. the XArm6 ScrewLightbulb checkpoints).",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=20,
+        help="Env control rate (Hz). MUST match the dataset's collection/eval rate the policy was "
+        "trained at (e.g. 30 for the ScrewLightbulb checkpoints, 20 for CoffeePressButton).",
+    )
+    parser.add_argument(
         "--noise_actor_cameras",
         type=str,
         default=DEFAULT_NOISE_ACTOR_CAMERAS,
@@ -510,7 +588,7 @@ def main():
         "--min_buffer_size",
         type=int,
         default=1_000,
-        help="Env steps to collect (with Gaussian warmup noise) before starting SAC updates.",
+        help="Number of chunk transitions to collect (with Gaussian warmup noise) before starting SAC updates.",
     )
     parser.add_argument(
         "--target_entropy",
@@ -565,9 +643,8 @@ def main():
 
     device = torch.device(args.device)
 
-    # ── Load frozen pi05 + its processors ────────────────────────────────
-    print(f"Loading pi05 policy from {args.policy_path} ...")
-    frozen_policy = PI05Policy.from_pretrained(args.policy_path)
+    # ── Load frozen VLA (pi05 / SmolVLA, auto-detected) + its processors ──
+    frozen_policy = load_frozen_policy(args.policy_path)
     frozen_policy.eval()
     frozen_policy.to(device)
 
@@ -596,13 +673,19 @@ def main():
     )
 
     print(
-        f"pi05: chunk_size={full_chunk_size}, max_action_dim={max_action_dim}, "
+        f"{frozen_policy.config.type}: chunk_size={full_chunk_size}, max_action_dim={max_action_dim}, "
         f"n_action_steps(exec)={n_action_steps}, noise_chunk={noise_chunk_size}, noise_dim={noise_dim}, "
         f"embodiment_id={embodiment_id}"
     )
 
     # ── Environment ──────────────────────────────────────────────────────
-    env_cfg = RoboCasaEnv(task=args.task, robot=args.robot, camera_name=args.cameras)
+    env_cfg = RoboCasaEnv(
+        task=args.task,
+        robot=args.robot,
+        camera_name=args.cameras,
+        controller=args.controller,
+        fps=args.fps,
+    )
     env = _make_collect_env(env_cfg, args.collect_envs)
 
     eval_seeds = tuple(int(s) for s in args.eval_seeds.split(",") if s.strip() != "")
