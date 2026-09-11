@@ -118,6 +118,10 @@ class CompactObservationEncoder(nn.Module):
         """Resize (B, C, H, W) → (B, C, R, R)."""
         if self.resize_size is None:
             return img
+        # No-op when the caller already downsampled (observations are resized before being
+        # stored in the replay buffer, so this is the common case).
+        if img.shape[-2:] == (self.resize_size, self.resize_size):
+            return img
         return F.interpolate(img, size=(self.resize_size, self.resize_size), mode="bilinear", align_corners=False)
 
     def forward(self, observations: dict[str, Tensor], cache: bool | Tensor = False, detach: bool = False) -> Tensor:

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import datasets
+import httpx
 import numpy as np
 import packaging.version
 import torch
@@ -336,6 +337,17 @@ def get_repo_versions(repo_id: str) -> list[packaging.version.Version]:
     return repo_versions
 
 
+def _revision_not_found(message: str) -> RevisionNotFoundError:
+    """Build a ``RevisionNotFoundError`` that is not tied to an HTTP response.
+
+    ``huggingface_hub>=1.0`` requires a ``response`` keyword argument, so raising this error
+    for a locally-detected problem (e.g. a repo with no version tag) needs a stand-in
+    response, otherwise the constructor itself raises and masks the real message.
+    """
+    response = httpx.Response(404, request=httpx.Request("GET", ""))
+    return RevisionNotFoundError(message, response=response)
+
+
 def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> str:
     """Return the specified version if available on repo, or the latest compatible one.
 
@@ -360,7 +372,7 @@ def get_safe_version(repo_id: str, version: str | packaging.version.Version) -> 
     hub_versions = get_repo_versions(repo_id)
 
     if not hub_versions:
-        raise RevisionNotFoundError(
+        raise _revision_not_found(
             f"""Your dataset must be tagged with a codebase version.
             Assuming _version_ is the codebase_version value in the info.json, you can run this:
             ```python

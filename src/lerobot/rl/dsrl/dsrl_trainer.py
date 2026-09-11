@@ -18,6 +18,7 @@ from lerobot.rl.dsrl.dsrl_config import DSRLConfig
 from lerobot.rl.dsrl.dsrl_env_wrapper import (
     DSRL_ACTION_CHUNK_RAW_REWARD,
     DSRL_ACTION_CHUNK_STEPS,
+    DSRL_ACTION_CHUNK_SUCCESS,
     DSRLEnvWrapper,
     MacroRewardFn,
 )
@@ -181,6 +182,8 @@ def train_dsrl(
     episode_raw_rewards = np.zeros(num_collect_envs, dtype=np.float32)
     episode_shaped_rewards = np.zeros(num_collect_envs, dtype=np.float32)
     episode_steps = np.zeros(num_collect_envs, dtype=np.int64)
+    # Whether each in-flight episode has succeeded at any point
+    episode_successes = np.zeros(num_collect_envs, dtype=bool)
     episode_count = 0
     training_step = 0
     nonfinite_transitions = 0
@@ -188,6 +191,7 @@ def train_dsrl(
     # Track rolling episode stats for WandB / console
     recent_raw_returns: deque[float] = deque(maxlen=10)
     recent_shaped_returns: deque[float] = deque(maxlen=10)
+    recent_successes: deque[float] = deque(maxlen=10)
 
     print(
         f"Starting DSRL training for {total_steps} environment steps "
@@ -213,6 +217,7 @@ def train_dsrl(
         raw_rewards = _as_float_batch(info.get(DSRL_ACTION_CHUNK_RAW_REWARD, shaped_reward), num_collect_envs)
         dones = _as_bool_batch(done, num_collect_envs)
         truncateds = _as_bool_batch(truncated, num_collect_envs)
+        successes = _as_bool_batch(info.get(DSRL_ACTION_CHUNK_SUCCESS, False), num_collect_envs)
         collected_steps = int(primitive_steps.sum())
         env_step += collected_steps
 
@@ -254,6 +259,7 @@ def train_dsrl(
         episode_raw_rewards += raw_rewards
         episode_shaped_rewards += shaped_rewards
         episode_steps += primitive_steps
+        episode_successes |= successes
 
         # Treat a non-finite env as finished so it is reset below, refreshing its observation.
         finished = dones | truncateds | nonfinite
@@ -262,14 +268,18 @@ def train_dsrl(
             episode_raw_reward = float(episode_raw_rewards[finished_env_idx])
             episode_shaped_reward = float(episode_shaped_rewards[finished_env_idx])
             finished_episode_steps = int(episode_steps[finished_env_idx])
+            episode_success = bool(episode_successes[finished_env_idx])
             recent_raw_returns.append(episode_raw_reward)
             recent_shaped_returns.append(episode_shaped_reward)
+            recent_successes.append(float(episode_success))
 
             episode_metrics = {
                 "episode/return": episode_shaped_reward,
                 "episode/shaped_return": episode_shaped_reward,
                 "episode/raw_return": episode_raw_reward,
                 "episode/length": finished_episode_steps,
+                "episode/success": float(episode_success),
+                "episode/success_rate_ma10": np.mean(recent_successes) if recent_successes else 0.0,
                 "episode/count": episode_count,
                 "episode/env_index": finished_env_idx,
                 "episode/shaped_return_ma10": np.mean(recent_shaped_returns)
@@ -284,7 +294,9 @@ def train_dsrl(
 
             print(
                 f"Episode {episode_count} | env={finished_env_idx} | steps={finished_episode_steps} | "
+                f"success={int(episode_success)} | "
                 f"shaped_return={episode_shaped_reward:.2f} | raw_return={episode_raw_reward:.2f} | "
+                f"success_ma10={episode_metrics['episode/success_rate_ma10']:.2f} | "
                 f"shaped_return_ma10={episode_metrics['episode/shaped_return_ma10']:.2f} | "
                 f"buffer={len(buffer)}"
             )
@@ -296,6 +308,7 @@ def train_dsrl(
             episode_raw_rewards[finished] = 0.0
             episode_shaped_rewards[finished] = 0.0
             episode_steps[finished] = 0
+            episode_successes[finished] = False
 
         # Train SAC
         if len(buffer) >= dsrl_cfg.min_buffer_size:

@@ -56,6 +56,7 @@ os.environ.setdefault("NUMBA_CACHE_DIR", tempfile.mkdtemp(prefix="numba_cache_")
 import gymnasium as gym
 import numpy as np
 import torch
+import torch.nn.functional as F  # noqa: N812
 
 from lerobot.envs.configs import RoboCasaEnv
 from lerobot.envs.factory import make_env
@@ -156,7 +157,9 @@ def load_frozen_policy(policy_path: str) -> PreTrainedPolicy:
 # ── Observation adapters ────────────────────────────────────────────────────────────
 
 
-def make_prepare_obs_fn(device: torch.device, noise_actor_cameras: list[str]):
+def make_prepare_obs_fn(
+    device: torch.device, noise_actor_cameras: list[str], resize_size: int | None = None
+):
     """Raw (batched) RoboCasa obs → compact noise-actor observation (image(s) + state).
 
     The small SAC policy conditions on the resized ``noise_actor_cameras`` and the robot
@@ -164,6 +167,9 @@ def make_prepare_obs_fn(device: torch.device, noise_actor_cameras: list[str]):
     normalized, tokenized observation the VLA needs is built separately by
     :func:`make_prepare_frozen_obs_fn`. Multiple cameras are stacked along the channel axis
     by the compact encoder.
+
+    Images are downsampled to ``resize_size`` here — i.e. *before* they reach the replay
+    buffer.
     """
 
     def prepare_obs(obs: dict) -> dict[str, torch.Tensor]:
@@ -177,7 +183,12 @@ def make_prepare_obs_fn(device: torch.device, noise_actor_cameras: list[str]):
                     f"Noise-actor camera {cam!r} not in observation keys "
                     f"{sorted(k for k in policy_obs if k.startswith('observation.image'))}."
                 )
-            out[cam] = policy_obs[cam].to(device)
+            image = policy_obs[cam].to(device)
+            if resize_size is not None and image.shape[-2:] != (resize_size, resize_size):
+                image = F.interpolate(
+                    image, size=(resize_size, resize_size), mode="bilinear", align_corners=False
+                )
+            out[cam] = image
         return out
 
     return prepare_obs
@@ -699,7 +710,9 @@ def main():
     # ── Adapters ─────────────────────────────────────────────────────────
     noise_actor_cameras = [c.strip() for c in args.noise_actor_cameras.split(",") if c.strip()]
     print(f"Noise actor conditions on {len(noise_actor_cameras)} camera(s): {noise_actor_cameras}")
-    prepare_obs_fn = make_prepare_obs_fn(device, noise_actor_cameras)
+    # Same size the compact encoder resizes to, so the buffer never stores full-res frames.
+    obs_resize = args.dsrl_image_resize if args.dsrl_image_resize > 0 else None
+    prepare_obs_fn = make_prepare_obs_fn(device, noise_actor_cameras, resize_size=obs_resize)
 
     def make_frozen_obs_for_env(target_env):
         return make_prepare_frozen_obs_fn(target_env, preprocessor, device, embodiment_id, args.prompt)
