@@ -86,11 +86,72 @@ DEFAULT_NOISE_ACTOR_CAMERAS = "observation.images.robot0_agentview_left"
 DEFAULT_PROMPT = "Press the coffee machine button."
 
 
-def _make_collect_env(env_cfg: RoboCasaEnv, num_envs: int):
+def _make_collect_env(
+    env_cfg: RoboCasaEnv,
+    num_envs: int,
+    placement_bank: dict | None = None,
+    seed: int = 0,
+    kitchen_bank: dict | None = None,
+    start_rejection: dict | None = None,
+):
+    """Collection vec env: sub-env ``i`` is construction seed ``i``, i.e. one fixed kitchen.
+
+    Without a bank this is exactly ``make_env``. A placement bank moves the task object to that
+    kitchen's next training placement on every reset; a kitchen bank makes each sub-env a pool of
+    the bank's training kitchens, dealt round-robin, switching kitchen on every reset. Keeping
+    ``num_envs`` slots either way keeps env steps per SAC update identical to the fixed-start
+    runs. ``start_rejection`` wraps each raw env, inside any placement wrapper.
+    """
     if num_envs < 1:
         raise ValueError("--collect_envs must be >= 1")
-    envs = make_env(env_cfg, n_envs=num_envs, use_async_envs=False)
-    return envs[env_cfg.type][0]
+
+    def raw(s: int):
+        return _wrap_start_rejection(_make_single_robocasa_env(env_cfg, seed=s), start_rejection)
+
+    if kitchen_bank is not None:
+        from lerobot.envs.robocasa_placement_bank import KitchenPoolEnv
+
+        train_seeds = [k["scene_seed"] for k in kitchen_bank["train"]]
+        slots = [train_seeds[i::num_envs] for i in range(num_envs)]
+        for i, pool in enumerate(slots):
+            print(f"Collect slot {i}: kitchen pool (construction seeds) {pool}")
+
+        def pool_factory(i: int):
+            return lambda: KitchenPoolEnv(raw, slots[i], shuffle=True, seed=seed + i)
+
+        return gym.vector.SyncVectorEnv([pool_factory(i) for i in range(num_envs)])
+    if placement_bank is None:
+        if start_rejection is None:
+            envs = make_env(env_cfg, n_envs=num_envs, use_async_envs=False)
+            return envs[env_cfg.type][0]
+        return gym.vector.SyncVectorEnv([lambda i=i: raw(i) for i in range(num_envs)])
+
+    from lerobot.envs.robocasa_placement_bank import PlacementBankWrapper, scene_entries
+
+    def factory(i: int):
+        def _make():
+            entries = scene_entries(placement_bank, i, "train")
+            return PlacementBankWrapper(
+                raw(i),
+                placement_bank,
+                i,
+                entries,
+                shuffle=True,
+                seed=seed + i,
+            )
+
+        return _make
+
+    # Same vector-env class make_env uses for a synchronous RoboCasa env.
+    return gym.vector.SyncVectorEnv([factory(i) for i in range(num_envs)])
+
+
+def _wrap_start_rejection(env: gym.Env, start_rejection: dict | None) -> gym.Env:
+    if start_rejection is None:
+        return env
+    from lerobot.envs.robocasa_placement_bank import StartPoseRejectionWrapper
+
+    return StartPoseRejectionWrapper(env, **start_rejection)
 
 
 def _register_literal_draccus_decoder() -> None:
@@ -157,9 +218,7 @@ def load_frozen_policy(policy_path: str) -> PreTrainedPolicy:
 # ── Observation adapters ────────────────────────────────────────────────────────────
 
 
-def make_prepare_obs_fn(
-    device: torch.device, noise_actor_cameras: list[str], resize_size: int | None = None
-):
+def make_prepare_obs_fn(device: torch.device, noise_actor_cameras: list[str], resize_size: int | None = None):
     """Raw (batched) RoboCasa obs → compact noise-actor observation (image(s) + state).
 
     The small SAC policy conditions on the resized ``noise_actor_cameras`` and the robot
@@ -315,12 +374,12 @@ MACRO_REWARD_FNS = {"goal": _goal_reward}
 # ── Evaluation ───────────────────────────────────────────────────────────────────────
 
 
-def _make_single_robocasa_env(env_cfg: RoboCasaEnv, seed: int):
-    """Build the raw (non-vectorized) RoboCasa gym env, so eval can wrap it for frame capture.
+def _make_single_robocasa_env(env_cfg: RoboCasaEnv, seed: int, ep_meta: dict | None = None):
+    """Raw (non-vectorized) RoboCasa gym env, built with the same fields ``make_env`` uses.
 
-    Constructed with the same fields ``make_env`` uses, so a given ``seed`` yields the same
-    fixed kitchen (layout/style) as the training env with that seed. RoboCasa fixes the scene
-    per env instance at construction; ``reset()`` only re-randomizes object/robot poses.
+    A given ``seed`` yields the same fixed kitchen, object instance and placement; only the arm
+    reset noise varies per reset. ``ep_meta={"layout_ids": [L], "style_ids": [S]}`` pins the
+    kitchen instead, turning ``seed`` into a sweep over object placement within that scene.
     """
     from lerobot.envs.robocasa_env import RoboCasaEnv as RoboCasaGymEnv
 
@@ -336,7 +395,31 @@ def _make_single_robocasa_env(env_cfg: RoboCasaEnv, seed: int):
         observation_height=env_cfg.observation_height,
         camera_name_mapping=env_cfg.camera_name_mapping,
         seed=seed,
+        ep_meta=ep_meta,
     )
+
+
+def _parse_eval_scenes(spec: str) -> list[tuple[int, int] | None]:
+    """``"1:4,8:6"`` -> ``[(1, 4), (8, 6)]``; ``""`` -> ``[None]`` (seed picks the kitchen)."""
+    spec = spec.strip()
+    if not spec:
+        return [None]
+    scenes: list[tuple[int, int] | None] = []
+    for chunk in spec.split(","):
+        if not chunk.strip():
+            continue
+        layout, _, style = chunk.partition(":")
+        if not style:
+            raise ValueError(f"--eval_scenes entry {chunk!r} must look like 'layout:style', e.g. '1:4'")
+        scenes.append((int(layout), int(style)))
+    return scenes or [None]
+
+
+from lerobot.envs.robocasa_placement_bank import (  # noqa: E402
+    FIXED_RUN_KITCHEN_SEEDS,  # noqa: F401
+    kitchen_eval_cells as _kitchen_eval_cells,
+    placement_eval_cells as _placement_eval_cells,
+)
 
 
 class _RoboCasaFrameCapture(gym.Wrapper):
@@ -415,23 +498,49 @@ def make_robocasa_eval_fn(
     n_obs_steps: int,
     num_episodes: int = 10,
     eval_seeds: tuple[int, ...] = (0,),
+    eval_scenes: list[tuple[int, int] | None] | None = None,
     num_videos: int = 3,
     video_camera: str = "robot0_agentview_left",
     video_dir: str | Path | None = None,
+    placement_bank: dict | None = None,
+    placement_cells: list[dict] | None = None,
+    start_rejection: dict | None = None,
 ):
-    """Roll out the noise actor greedily in each eval kitchen; report per-kitchen + aggregate.
+    """Roll out the noise actor greedily in each eval cell; report per-cell + aggregate.
 
-    Each seed in ``eval_seeds`` is one fixed kitchen. Reuse training seeds
-    (``0..collect_envs-1``) for in-distribution eval, and add higher, unseen seeds for
-    held-out generalization. ``num_episodes`` episodes are run *per kitchen* (so total eval
-    cost scales with ``len(eval_seeds) * num_episodes``), and one video is logged per kitchen.
+    A cell is one start condition and runs ``num_episodes`` episodes. With ``eval_scenes=[None]``
+    each seed in ``eval_seeds`` is a different kitchen (the historical behaviour); with explicit
+    ``eval_scenes`` the kitchen is pinned and ``eval_seeds`` sweeps object placement within it;
+    with ``placement_cells`` the cells come from a bank and metrics are also aggregated per group
+    (``success_rate_heldout`` / ``_reference`` / ``_train``).
+
+    The actor is evaluated deterministically, so episodes within a cell differ only by robocasa's
+    arm-joint reset noise (0.02 rad) -- the number of cells is the effective sample size.
     """
     video_dir = Path(video_dir) if video_dir is not None else Path("outputs/dsrl_pi05_robocasa/eval_videos")
     video_fps = env_cfg.fps
     eval_seeds = tuple(eval_seeds)
+    eval_scenes = list(eval_scenes) if eval_scenes else [None]
 
-    def _rollout_kitchen(noise_actor: NoiseActorPolicy, seed: int, record_video: bool):
-        frame_capture = _RoboCasaFrameCapture(_make_single_robocasa_env(env_cfg, seed=seed), video_camera)
+    def _cell_label(scene: tuple[int, int] | None, seed: int) -> str:
+        return f"seed{seed}" if scene is None else f"L{scene[0]}S{scene[1]}_p{seed}"
+
+    def _rollout_kitchen(
+        noise_actor: NoiseActorPolicy,
+        seed: int,
+        record_video: bool,
+        scene: tuple[int, int] | None = None,
+        entry: dict | None = None,
+    ):
+        ep_meta = None if scene is None else {"layout_ids": [scene[0]], "style_ids": [scene[1]]}
+        raw_env = _wrap_start_rejection(
+            _make_single_robocasa_env(env_cfg, seed=seed, ep_meta=ep_meta), start_rejection
+        )
+        if entry is not None:
+            from lerobot.envs.robocasa_placement_bank import PlacementBankWrapper
+
+            raw_env = PlacementBankWrapper(raw_env, placement_bank, seed, [entry], shuffle=False)
+        frame_capture = _RoboCasaFrameCapture(raw_env, video_camera)
         eval_env = gym.vector.SyncVectorEnv([lambda: frame_capture])
         dsrl_env = DSRLEnvWrapper(
             env=eval_env,
@@ -486,27 +595,306 @@ def make_robocasa_eval_fn(
         metrics: dict[str, float] = {}
         labeled_frames: list[tuple[str, list[np.ndarray]]] = []
 
-        for i, seed in enumerate(eval_seeds):
-            successes, ret, steps, frames = _rollout_kitchen(noise_actor, seed, record_video=i < num_videos)
+        if placement_cells is not None:
+            cells = placement_cells
+        else:
+            cells = [
+                {
+                    "seed": seed,
+                    "scene": scene,
+                    "entry": None,
+                    "label": _cell_label(scene, seed),
+                    "group": None,
+                }
+                for scene in eval_scenes
+                for seed in eval_seeds
+            ]
+        group_successes: dict[str, list[int]] = {}
+        for i, cell in enumerate(cells):
+            successes, ret, steps, frames = _rollout_kitchen(
+                noise_actor,
+                cell["seed"],
+                record_video=i < num_videos,
+                scene=cell["scene"],
+                entry=cell["entry"],
+            )
             total_successes += successes
             total_return += ret
             total_steps += steps
-            metrics[f"success_rate_seed{seed}"] = successes / max(num_episodes, 1)
+            metrics[f"success_rate_{cell['label']}"] = successes / max(num_episodes, 1)
+            if cell["group"] is not None:
+                group = group_successes.setdefault(cell["group"], [0, 0])
+                group[0] += successes
+                group[1] += num_episodes
             if frames:
-                labeled_frames.append((f"seed{seed}", frames))
+                labeled_frames.append((cell["label"], frames))
 
         noise_actor.train()
 
         if labeled_frames:
             _log_eval_videos(labeled_frames, step, fps=video_fps, video_dir=video_dir)
 
-        total_episodes = max(num_episodes * len(eval_seeds), 1)
+        for group, (succ, n) in group_successes.items():
+            metrics[f"success_rate_{group}"] = succ / max(n, 1)
+        total_episodes = max(num_episodes * len(cells), 1)
         metrics["success_rate"] = total_successes / total_episodes
         metrics["avg_return"] = total_return / total_episodes
         metrics["avg_length"] = total_steps / total_episodes
         return metrics
 
     return eval_fn
+
+
+# ── Eval-only (score a saved noise actor) ────────────────────────────────────────────
+
+
+def _load_noise_actor(path: str, dsrl_cfg: DSRLConfig, device: torch.device) -> NoiseActorPolicy:
+    """Rebuild a saved noise actor from a ``train_dsrl`` checkpoint dir.
+
+    ``config.json`` carries ``noise_dim`` and ``input_features``, but ``dsrl_config`` is not saved:
+    pass the same ``--dsrl_*`` flags the run trained with or the state dict will not fit.
+    """
+    from safetensors.torch import load_file
+
+    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.rl.dsrl.noise_actor import LightweightNoiseActorPolicy
+
+    cfg = PreTrainedConfig.from_pretrained(path)
+    cfg.device = str(device)
+    actor = (
+        LightweightNoiseActorPolicy(cfg, dsrl_config=dsrl_cfg)
+        if dsrl_cfg.use_compact_encoder
+        else NoiseActorPolicy(cfg)
+    )
+    state_dict = load_file(os.path.join(path, "model.safetensors"))
+    # ``save_pretrained`` writes safetensors, which cannot store the same tensor twice. With
+    # ``shared_encoder=True`` the encoder is reachable as ``actor.encoder.*``,
+    # ``encoder_actor.*`` and ``encoder_critic.*``, so only one of those names survives in the
+    # file and a strict load reports the aliases as missing. Load non-strict, then verify by
+    # tensor identity that every *distinct* parameter really did receive a value — that still
+    # catches a genuine architecture mismatch from wrong --dsrl_* flags.
+    missing, unexpected = actor.load_state_dict(state_dict, strict=False)
+    # Compare by storage pointer, not id(): state_dict() hands back a fresh detached Tensor per
+    # call, so identity never matches, but aliases of one parameter share their storage.
+    own = actor.state_dict()
+    loaded_ptrs = {t.data_ptr() for name, t in own.items() if name in state_dict}
+    truly_missing = sorted(name for name in missing if own[name].data_ptr() not in loaded_ptrs)
+    if truly_missing or unexpected:
+        raise RuntimeError(
+            f"Noise-actor state dict does not match the rebuilt architecture "
+            f"({len(truly_missing)} unloaded, {len(unexpected)} unexpected keys). The --dsrl_* "
+            f"flags most likely differ from the training run (image_resize={dsrl_cfg.image_resize_size}, "
+            f"hidden_dims={dsrl_cfg.hidden_dims}). First unloaded: {truly_missing[:3]}"
+        )
+    if missing:
+        print(f"  ({len(missing)} shared-encoder alias keys resolved via shared storage)")
+    actor.to(device)
+    actor.eval()
+    print(f"Loaded noise actor from {path} (noise_dim={cfg.noise_dim})")
+    return actor
+
+
+def _pass_at_k(n: int, c: int, k: int) -> float:
+    """Unbiased pass@k from ``c`` successes in ``n`` rollouts (Chen et al., 2021)."""
+    if k > n:
+        return float("nan")
+    if n - c < k:
+        return 1.0
+    from math import comb
+
+    return 1.0 - comb(n - c, k) / comb(n, k)
+
+
+def _run_steerability_eval(
+    args,
+    env_cfg: RoboCasaEnv,
+    make_frozen_obs_for_env,
+    prepare_obs_fn,
+    generate_action_chunk_fn,
+    reward_fn,
+    macro_reward_fn,
+    device: torch.device,
+    noise_dim: int,
+    n_action_steps: int,
+    starts: list[tuple[int, str]],
+    start_rejection: dict | None = None,
+) -> None:
+    """Best-of-K steerability of a frozen policy: random-noise rollouts, no actor, no training.
+
+    Each chunk's noise is a fresh ``randn(noise_dim)`` -- the sampler DSRL's warmup uses -- pushed
+    through the same wrapper and chunking as training. ``--noise_chunk_size`` sets the
+    parameterization: 1 holds one vector across the chunk (the space the DSRL actor steers in),
+    ``chunk_size`` draws fresh noise per timestep (vanilla pi05, the control). Episode bookkeeping
+    mirrors dsrl_trainer. ``starts`` is ``[(construction_seed, group)]``; reports mean success and
+    unbiased pass@k per start plus the mean over starts per group.
+    """
+    import json
+
+    seeds = [seed for seed, _ in starts]
+    group_of = dict(starts)
+    per_start = args.steer_parallel_per_start
+    quota = args.steer_rollouts_per_start
+    factories = [
+        lambda s=s: _wrap_start_rejection(_make_single_robocasa_env(env_cfg, seed=s), start_rejection)
+        for s in seeds
+        for _ in range(per_start)
+    ]
+    vec = gym.vector.SyncVectorEnv(factories)
+    num_envs = len(factories)
+    dsrl_env = DSRLEnvWrapper(
+        env=vec,
+        noise_dim=noise_dim,
+        prepare_obs_fn=prepare_obs_fn,
+        generate_action_chunk_fn=generate_action_chunk_fn,
+        device=str(device),
+        n_obs_steps=1,
+        prepare_frozen_obs_fn=make_frozen_obs_for_env(vec),
+        reward_fn=reward_fn,
+        macro_reward_fn=macro_reward_fn,
+    )
+    print(
+        f"Steerability eval: starts {starts} x {quota} rollouts, {per_start} parallel envs/start, "
+        f"start rejection {start_rejection}, "
+        f"noise_chunk_size={args.noise_chunk_size} (noise_dim={noise_dim}), exec {n_action_steps} steps/chunk"
+    )
+
+    rng = torch.Generator(device="cpu").manual_seed(args.seed)
+    results: dict[int, list[dict]] = {s: [] for s in seeds}
+    ep_success = np.zeros(num_envs, dtype=bool)
+    ep_steps = np.zeros(num_envs, dtype=np.int64)
+    dsrl_env.reset()
+    while any(len(results[s]) < quota for s in seeds):
+        noise = torch.randn(num_envs, noise_dim, generator=rng).numpy()
+        _, _, terminated, truncated, info = dsrl_env.step(noise)
+        ep_success |= np.asarray(info[DSRL_ACTION_CHUNK_SUCCESS], dtype=bool)
+        ep_steps += np.asarray(info[DSRL_ACTION_CHUNK_STEPS], dtype=np.int64)
+        finished = np.asarray(terminated, dtype=bool) | np.asarray(truncated, dtype=bool)
+        for idx in np.flatnonzero(finished):
+            seed = seeds[idx // per_start]
+            if len(results[seed]) < quota:
+                results[seed].append({"success": bool(ep_success[idx]), "steps": int(ep_steps[idx])})
+                if len(results[seed]) % 8 == 0:
+                    done = results[seed]
+                    print(
+                        f"  seed {seed}: {len(done)}/{quota} rollouts, success {np.mean([r['success'] for r in done]):.3f}"
+                    )
+        if finished.any():
+            dsrl_env.reset(env_mask=finished)
+            ep_success[finished] = False
+            ep_steps[finished] = 0
+    dsrl_env.close()
+
+    ks = [k for k in (1, 2, 4, 8, 16, 32, 64, 128) if k <= quota]
+    summary = {
+        "policy_path": args.policy_path,
+        "task": args.task,
+        "robot": args.robot,
+        "noise_chunk_size": args.noise_chunk_size,
+        "noise_mode": "dsrl_constant_per_chunk"
+        if args.noise_chunk_size == 1
+        else f"per_step_chunk{args.noise_chunk_size}",
+        "exec_action_steps": n_action_steps,
+        "rollouts_per_start": quota,
+        "seed": args.seed,
+        "start_rejection": start_rejection,
+        "starts": {},
+        "groups": {},
+    }
+    print("\n==== steerability results ====")
+    for seed in seeds:
+        n = len(results[seed])
+        c = sum(r["success"] for r in results[seed])
+        entry = {
+            "n": n,
+            "successes": c,
+            "mean_success": c / n,
+            "pass_at_k": {k: _pass_at_k(n, c, k) for k in ks},
+            "mean_success_steps": float(np.mean([r["steps"] for r in results[seed] if r["success"]]))
+            if c
+            else None,
+            "group": group_of[seed],
+            "rollouts": results[seed],
+        }
+        summary["starts"][seed] = entry
+        print(
+            f"  seed {seed} [{group_of[seed]}]: mean {entry['mean_success']:.3f} ({c}/{n}) | "
+            + " ".join(f"pass@{k}={v:.3f}" for k, v in entry["pass_at_k"].items())
+        )
+    for group in dict.fromkeys(g for _, g in starts):
+        members = [summary["starts"][seed] for seed, g in starts if g == group]
+        agg = {
+            "n_starts": len(members),
+            "mean_success": float(np.mean([m["mean_success"] for m in members])),
+            "pass_at_k": {k: float(np.mean([m["pass_at_k"][k] for m in members])) for k in ks},
+            "starts_with_any_success": int(sum(m["successes"] > 0 for m in members)),
+        }
+        summary["groups"][group] = agg
+        print(
+            f"  GROUP {group} ({len(members)} starts, {agg['starts_with_any_success']} with any success): "
+            f"mean {agg['mean_success']:.3f} | "
+            + " ".join(f"pass@{k}={v:.3f}" for k, v in agg["pass_at_k"].items())
+        )
+    out = Path(args.output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / f"steerability_nc{args.noise_chunk_size}.json"
+    path.write_text(json.dumps(summary, indent=1))
+    print(f"wrote {path}")
+
+    if args.wandb_enable:
+        try:
+            import wandb
+
+            run = wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_name,
+                dir=args.output_dir,
+                config={**vars(args), "mode": "steerability_eval"},
+            )
+            log = {}
+            for group, e in summary["groups"].items():
+                log[f"steer/{group}/mean_success"] = e["mean_success"]
+                for k, v in e["pass_at_k"].items():
+                    log[f"steer/{group}/pass@{k}"] = v
+            for seed, e in summary["starts"].items():
+                log[f"steer/seed{seed}/mean_success"] = e["mean_success"]
+                for k, v in e["pass_at_k"].items():
+                    log[f"steer/seed{seed}/pass@{k}"] = v
+            run.log(log)
+            run.finish()
+        except ImportError:
+            pass
+
+
+def _run_eval_only(args, eval_fn, dsrl_cfg: DSRLConfig, device: torch.device, env) -> None:
+    """Score one saved noise actor and print/log the per-cell metrics, then exit."""
+    noise_actor = _load_noise_actor(args.noise_actor_path, dsrl_cfg, device)
+
+    wandb_run = None
+    if args.wandb_enable:
+        try:
+            import wandb
+
+            wandb.init(
+                project=args.wandb_project,
+                name=args.wandb_name,
+                dir=args.output_dir,
+                config={**vars(args), "mode": "eval_only"},
+            )
+            wandb_run = wandb
+        except ImportError:
+            print("wandb not installed — skipping WandB logging.")
+
+    metrics = eval_fn(noise_actor, step=0)
+    print("\n==== eval_only results ====")
+    print(f"noise_actor : {args.noise_actor_path}")
+    print(f"frozen VLA  : {args.policy_path}")
+    print(f"episodes/cell: {args.eval_episodes}")
+    for key in sorted(metrics):
+        print(f"  {key} = {metrics[key]:.4f}")
+    if wandb_run is not None:
+        wandb_run.log({f"eval/{k}": v for k, v in metrics.items()}, step=0)
+        wandb_run.finish()
+    env.close()
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────────────
@@ -648,7 +1036,95 @@ def main():
         default="robot0_agentview_left",
         help="Raw camera name to record for eval videos (must be one of --cameras).",
     )
+    parser.add_argument(
+        "--eval_scenes",
+        type=str,
+        default="",
+        help="Comma-separated 'layout:style' pairs to pin the eval kitchen(s), e.g. '1:4,8:6'. "
+        "Empty (default) keeps the old behaviour where --eval_seeds picks the kitchen. When set, "
+        "--eval_seeds instead sweeps object placement *within* each pinned scene, which is what "
+        "you want for a seen-vs-unseen table.",
+    )
+    parser.add_argument(
+        "--noise_actor_path",
+        type=str,
+        default=None,
+        help="Evaluate this saved noise-actor checkpoint (a train_dsrl 'step_*' dir) instead of "
+        "training. Requires --eval_only.",
+    )
+    parser.add_argument(
+        "--eval_only",
+        action="store_true",
+        help="Run one evaluation pass and exit; no SAC training. Use with --noise_actor_path.",
+    )
+    parser.add_argument(
+        "--placement_bank",
+        type=str,
+        default=None,
+        help="Placement-bank JSON (scripts/build_lamp_placement_bank.py). Training: collect env i "
+        "(construction seed i, its fixed kitchen) moves the task object to that kitchen's next "
+        "*training* placement on every reset. Eval: cells come from --eval_placement_sets instead "
+        "of --eval_seeds/--eval_scenes. Also usable with --eval_only to score pre-bank checkpoints "
+        "on the same held-out placements.",
+    )
+    parser.add_argument(
+        "--eval_placement_sets",
+        type=str,
+        default="heldout,reference,train:2",
+        help="With --placement_bank: comma list of heldout | reference | train[:N]. 'reference' is "
+        "the original fixed placement every pre-bank run trained on (held out of the bank). "
+        "One cell per (kitchen, entry); --eval_episodes episodes each.",
+    )
+    parser.add_argument(
+        "--kitchen_bank",
+        type=str,
+        default=None,
+        help="Kitchen-bank JSON (scripts/build_coffee_kitchen_bank.py). Training: each collect slot "
+        "is a pool of the bank's training kitchens and switches kitchen on every reset. Eval: "
+        "cells come from --eval_kitchen_sets. Also usable with --eval_only to score fixed-kitchen "
+        "checkpoints on the held-out kitchens.",
+    )
+    parser.add_argument(
+        "--eval_kitchen_sets",
+        type=str,
+        default="heldout,reference",
+        help="With --kitchen_bank: comma list of heldout | reference | train[:N]. 'reference' = "
+        "construction seeds 0,1, the kitchens of the fixed-kitchen runs.",
+    )
+    parser.add_argument(
+        "--reject_start_rot_deg",
+        type=float,
+        default=0.0,
+        help="If > 0, re-reset (training AND eval envs) whenever the end effector starts more than "
+        "this many degrees, or --reject_start_pos_cm, from the pose that kitchen settles into with "
+        "RoboCasa's arm reset noise disabled. Removes starts where the noise jams the LEAP fingers "
+        "into a wall cabinet and rotates the hand (up to ~68 deg in CoffeePressButton kitchens). "
+        "0 = off (historical behaviour).",
+    )
+    parser.add_argument("--reject_start_pos_cm", type=float, default=3.0)
+    parser.add_argument(
+        "--steer_eval",
+        action="store_true",
+        help="Best-of-K steerability of the frozen policy: random-noise rollouts on the --eval_seeds starts, "
+        "no actor, no training. --noise_chunk_size 1 = DSRL's noise space, chunk_size = vanilla pi05.",
+    )
+    parser.add_argument("--steer_rollouts_per_start", type=int, default=64)
+    parser.add_argument("--steer_parallel_per_start", type=int, default=8)
+    parser.add_argument("--reject_start_max_retries", type=int, default=10)
     args = parser.parse_args()
+    start_rejection = None
+    if args.reject_start_rot_deg > 0:
+        start_rejection = {
+            "max_rot_deg": args.reject_start_rot_deg,
+            "max_pos_m": args.reject_start_pos_cm / 100.0,
+            "max_retries": args.reject_start_max_retries,
+        }
+    if sum(bool(x) for x in (args.placement_bank, args.kitchen_bank, args.eval_scenes)) > 1:
+        raise ValueError("--placement_bank, --kitchen_bank and --eval_scenes are mutually exclusive")
+    if args.steer_eval and (args.eval_only or args.placement_bank or args.eval_scenes):
+        raise ValueError("--steer_eval uses construction-seed starts (--eval_seeds, or a --kitchen_bank)")
+    if args.eval_only and not args.noise_actor_path:
+        raise ValueError("--eval_only requires --noise_actor_path")
     if args.dsrl_num_layers < 1:
         raise ValueError("--dsrl_num_layers must be >= 1")
 
@@ -697,15 +1173,66 @@ def main():
         controller=args.controller,
         fps=args.fps,
     )
-    env = _make_collect_env(env_cfg, args.collect_envs)
+    placement_bank = None
+    if args.placement_bank:
+        from lerobot.envs.robocasa_placement_bank import load_placement_bank
+
+        placement_bank = load_placement_bank(args.placement_bank)
+        if placement_bank["task"] != args.task or placement_bank["robot"] != args.robot:
+            raise ValueError(
+                f"Placement bank is for {placement_bank['task']}/{placement_bank['robot']}, "
+                f"not {args.task}/{args.robot}"
+            )
+        missing = [s for s in range(args.collect_envs) if s not in placement_bank["_scenes_by_seed"]]
+        if missing:
+            raise ValueError(f"--collect_envs {args.collect_envs} needs bank scenes for seeds {missing}")
+    kitchen_bank = None
+    if args.kitchen_bank:
+        import json
+
+        with open(os.path.expanduser(args.kitchen_bank)) as f:
+            kitchen_bank = json.load(f)
+        if kitchen_bank.get("bank_type") != "kitchens":
+            raise ValueError(
+                f"{args.kitchen_bank} is not a kitchen bank (bank_type={kitchen_bank.get('bank_type')})"
+            )
+        if kitchen_bank["task"] != args.task or kitchen_bank["robot"] != args.robot:
+            raise ValueError(
+                f"Kitchen bank is for {kitchen_bank['task']}/{kitchen_bank['robot']}, not {args.task}/{args.robot}"
+            )
+        if len(kitchen_bank["train"]) < args.collect_envs:
+            raise ValueError(
+                f"Kitchen bank has fewer training kitchens than --collect_envs {args.collect_envs}"
+            )
+    env = (
+        None
+        if args.steer_eval
+        else _make_collect_env(
+            env_cfg,
+            args.collect_envs,
+            placement_bank=placement_bank,
+            seed=args.seed,
+            # --eval_only never steps the collect env (each eval cell builds its own), so do not pay
+            # for a resident pool of every training kitchen just to close it again.
+            kitchen_bank=None if args.eval_only else kitchen_bank,
+            start_rejection=None if args.eval_only else start_rejection,
+        )
+    )
 
     eval_seeds = tuple(int(s) for s in args.eval_seeds.split(",") if s.strip() != "")
     train_seeds = list(range(args.collect_envs))
-    held_out = [s for s in eval_seeds if s not in train_seeds]
-    print(
-        f"Training kitchens (seeds): {train_seeds} | eval kitchens: {list(eval_seeds)}"
-        + (f" | held-out (unseen in training): {held_out}" if held_out else "")
-    )
+    if kitchen_bank is not None:
+        pass  # pools are printed by _make_collect_env
+    elif placement_bank is not None:
+        for s in train_seeds:
+            n_train = len(placement_bank["_scenes_by_seed"][s]["train"])
+            print(f"Training kitchen seed {s}: object cycles through {n_train} banked placements per pass")
+    else:
+        held_out = [s for s in eval_seeds if s not in train_seeds]
+        print(
+            f"Training kitchens (seeds): {train_seeds} | eval kitchens: {list(eval_seeds)}"
+            + (f" | held-out (unseen in training): {held_out}" if held_out else "")
+        )
 
     # ── Adapters ─────────────────────────────────────────────────────────
     noise_actor_cameras = [c.strip() for c in args.noise_actor_cameras.split(",") if c.strip()]
@@ -728,6 +1255,27 @@ def main():
         device,
     )
     reward_fn = REWARD_FNS.get(args.reward_mode)
+    if args.steer_eval:
+        _run_steerability_eval(
+            args,
+            env_cfg,
+            make_frozen_obs_for_env,
+            prepare_obs_fn,
+            generate_action_chunk_fn,
+            reward_fn,
+            MACRO_REWARD_FNS.get(args.reward_mode),
+            device,
+            noise_dim,
+            n_action_steps,
+            starts=(
+                [(k["scene_seed"], "train") for k in kitchen_bank["train"]]
+                + [(k["scene_seed"], "heldout") for k in kitchen_bank["heldout"]]
+                if kitchen_bank is not None
+                else [(int(x), "fixed") for x in args.eval_seeds.split(",") if x.strip()]
+            ),
+            start_rejection=start_rejection,
+        )
+        return
     macro_reward_fn = MACRO_REWARD_FNS.get(args.reward_mode)
 
     discount = args.primitive_discount**n_action_steps
@@ -743,8 +1291,32 @@ def main():
             "dir": args.output_dir,
         }
 
+    eval_scenes = _parse_eval_scenes(args.eval_scenes)
+    if eval_scenes != [None]:
+        print(
+            f"Eval kitchens PINNED to {[f'L{layout}S{style}' for layout, style in eval_scenes]}; "
+            f"--eval_seeds {list(eval_seeds)} now sweeps object placement within each."
+        )
+
+    placement_cells = None
+    if placement_bank is not None:
+        # Eval kitchens = the bank's kitchens (normally the same seeds the collect envs use).
+        bank_seeds = sorted(placement_bank["_scenes_by_seed"])
+        placement_cells = _placement_eval_cells(placement_bank, args.eval_placement_sets, bank_seeds)
+        print(
+            f"Eval: {len(placement_cells)} placement cells ({args.eval_placement_sets}) x "
+            f"{args.eval_episodes} episodes: {[c['label'] for c in placement_cells]}"
+        )
+    elif kitchen_bank is not None:
+        # Kitchen cells reuse the same generic cell path: seed = kitchen, no scene pin, no entry.
+        placement_cells = _kitchen_eval_cells(kitchen_bank, args.eval_kitchen_sets)
+        print(
+            f"Eval: {len(placement_cells)} kitchen cells ({args.eval_kitchen_sets}) x "
+            f"{args.eval_episodes} episodes: {[c['label'] for c in placement_cells]}"
+        )
+
     eval_fn = None
-    if args.eval_freq > 0:
+    if args.eval_freq > 0 or args.eval_only:
         eval_fn = make_robocasa_eval_fn(
             env_cfg=env_cfg,
             make_frozen_obs_for_env=make_frozen_obs_for_env,
@@ -757,9 +1329,13 @@ def main():
             n_obs_steps=1,
             num_episodes=args.eval_episodes,
             eval_seeds=eval_seeds,
+            eval_scenes=eval_scenes,
             num_videos=args.eval_videos,
             video_camera=args.video_camera,
             video_dir=Path(args.output_dir) / "eval_videos",
+            placement_bank=placement_bank,
+            placement_cells=placement_cells,
+            start_rejection=start_rejection,
         )
 
     dsrl_cfg = DSRLConfig(
@@ -777,6 +1353,10 @@ def main():
         save_freq=args.save_freq,
         eval_freq=args.eval_freq,
     )
+
+    if args.eval_only:
+        _run_eval_only(args, eval_fn, dsrl_cfg, device, env)
+        return
 
     train_dsrl(
         env=env,

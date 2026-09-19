@@ -648,6 +648,10 @@ class RoboCasaEnv(EnvConfig):
     #   path to a composite-controller .json -> e.g. a *_joint_pos.json for joint-position policies.
     controller: str | None = None
     fps: int = 20
+    # Pin the kitchen. None = sample from all 10 layouts x 12 styles using the construction
+    # seed; setting both fixes the scene so the per-sub-env seed varies only object placement.
+    layout_id: int | None = None
+    style_id: int | None = None
     episode_length: int | None = None  # set inside the env for each task
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
@@ -655,19 +659,7 @@ class RoboCasaEnv(EnvConfig):
     camera_name_mapping: dict[str, str] | None = None
     observation_height: int = 256
     observation_width: int = 256
-    features: dict[str, PolicyFeature] = field(
-        default_factory=lambda: {}
-    )
-    features_map: dict[str, str] = field(
-        default_factory=lambda: {
-            ACTION: ACTION,
-            "agent_pos": OBS_STATE,
-            "pixels/robot0_agentview_center_image": "observation.images.robot0_agentview_center",
-            "pixels/robot0_agentview_left_image": "observation.images.robot0_agentview_left",
-            "pixels/robot0_agentview_right_image": "observation.images.robot0_agentview_right",
-            "pixels/robot0_eye_in_hand_image": "observation.images.robot0_eye_in_hand",
-        }
-    )
+    features: dict[str, PolicyFeature] = field(default_factory=lambda: {})
     features_map: dict[str, str] = field(
         default_factory=lambda: {
             ACTION: ACTION,
@@ -740,17 +732,38 @@ class RoboCasaEnv(EnvConfig):
             "max_episode_steps": self.episode_length,
         }
 
+    @property
+    def scene_ep_meta(self) -> dict | None:
+        """``ep_meta`` pinning the kitchen, or None to let the construction seed pick one.
+
+        The keys must be the *plural* ``layout_ids``/``style_ids``: those reach ``robosuite.make``
+        and pin the sampling pool. The singular keys only land via ``set_ep_meta``, which runs
+        after ``_load_model`` and is a no-op while ``hard_reset=False``.
+        """
+        if self.layout_id is None and self.style_id is None:
+            return None
+        return {
+            "layout_ids": [self.layout_id if self.layout_id is not None else -1],
+            "style_ids": [self.style_id if self.style_id is not None else -1],
+        }
+
     def create_envs(self, n_envs: int, use_async_envs: bool = False):
         from .robocasa_env import create_robocasa_envs
 
         if self.task is None:
             raise ValueError("RoboCasaEnv requires a task to be specified")
         env_cls = _make_vec_env_cls(use_async_envs, n_envs)
+        gym_kwargs = self.gym_kwargs
+        ep_meta = self.scene_ep_meta
+        if ep_meta is not None:
+            # Same kitchen for every sub-env, so their differing construction seeds vary only
+            # object instance/placement and robot base pose.
+            gym_kwargs["ep_metas"] = [dict(ep_meta) for _ in range(n_envs)]
         return create_robocasa_envs(
             task=self.task,
             n_envs=n_envs,
             camera_name=self.camera_name,
-            gym_kwargs=self.gym_kwargs,
+            gym_kwargs=gym_kwargs,
             env_cls=env_cls,
         )
 
@@ -834,6 +847,7 @@ class DexMimicGenEnv(EnvConfig):
             gym_kwargs=self.gym_kwargs,
             env_cls=env_cls,
         )
+
 
 @EnvConfig.register_subclass("isaaclab_arena")
 @dataclass
