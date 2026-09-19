@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
+from typing import Any
 
 import einops
 import numpy as np
@@ -204,3 +205,63 @@ class VanillaObservationProcessorStep(ObservationProcessorStep):
                 new_features[src_ft][key] = feat
 
         return new_features
+
+
+@dataclass
+@ProcessorStepRegistry.register(name="state_dropout_processor")
+class StateDropoutProcessorStep(ObservationProcessorStep):
+    """Randomly drops the ENTIRE proprioceptive state of a sample during training.
+
+    One Bernoulli draw per sample, and when it fires the whole state vector is replaced with zeros.
+
+    Semantics that differ from `torch.nn.Dropout` and matter here:
+
+    * It must run AFTER normalization. QUANTILES normalization maps [q01, q99] to
+      [-1, 1], so zero is the MIDPOINT OF THE OBSERVED RANGE of each dimension (the
+      midpoint, not the median -- for a skewed joint the two differ). A dropped state
+      therefore reads as a mid-range, in-distribution pose rather than the physically
+      meaningful "every joint at 0 radians" that zeroing raw units would mean.
+
+    The step is INERT unless `set_training(True)` has been called.
+    """
+
+    p: float = 0.0
+    observation_key: str = OBS_STATE
+
+    def __post_init__(self) -> None:
+        if not 0.0 <= self.p < 1.0:
+            raise ValueError(f"State dropout probability must be in [0, 1), got {self.p}.")
+        self._training = False
+
+    def set_training(self, mode: bool = True) -> None:
+        self._training = mode
+
+    def observation(self, observation: dict) -> dict:
+        if not getattr(self, "_training", False) or self.p <= 0.0:
+            return observation
+
+        state = observation.get(self.observation_key)
+        if state is None:
+            return observation
+
+        if state.ndim == 1:
+            # Unbatched (single sample): one draw for the whole vector.
+            keep = torch.rand((), device=state.device) >= self.p
+        else:
+            # Batched as (B, ...): one independent draw per sample, broadcast over
+            # every feature dimension so a dropped sample loses its state entirely.
+            keep = torch.rand(state.shape[0], device=state.device) >= self.p
+            keep = keep.reshape(-1, *([1] * (state.ndim - 1)))
+        observation[self.observation_key] = state * keep.to(dtype=state.dtype)
+        return observation
+
+    def get_config(self) -> dict[str, Any]:
+        # `_training` is deliberately NOT serialized: a reloaded pipeline must come
+        # back inert and be switched on only by the training loop.
+        return {"p": self.p, "observation_key": self.observation_key}
+
+    def transform_features(
+        self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
+    ) -> dict[PipelineFeatureType, dict[str, PolicyFeature]]:
+        """Dropout does not change shapes or dtypes."""
+        return features

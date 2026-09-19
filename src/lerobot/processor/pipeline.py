@@ -210,6 +210,19 @@ class ProcessorStep(ABC):
         """Resets the internal state of the processor step, if any."""
         return None
 
+    def set_training(self, mode: bool = True) -> None:
+        """Switches the step between training and inference behaviour.
+
+        Almost every step behaves identically in both, so the default is a no-op.
+        Steps that inject randomness for regularization (e.g. input dropout) must
+        override this and stay INERT unless explicitly switched on, because the same
+        pipeline object is reused for evaluation and is serialized into checkpoints.
+
+        Args:
+            mode: True for training behaviour, False for inference behaviour.
+        """
+        return None
+
     @abstractmethod
     def transform_features(
         self, features: dict[PipelineFeatureType, dict[str, PolicyFeature]]
@@ -1297,6 +1310,21 @@ class DataProcessorPipeline[TInput, TOutput](HubMixin):
         for step in self.steps:
             if hasattr(step, "reset"):
                 step.reset()
+
+    def train(self, mode: bool = True):
+        """Puts every step into training mode. Mirrors `torch.nn.Module.train`.
+
+        Only steps that opt in via `set_training` change behaviour; all others ignore
+        it. Returns self so it can be chained.
+        """
+        for step in self.steps:
+            if hasattr(step, "set_training"):
+                step.set_training(mode)
+        return self
+
+    def eval(self):
+        """Puts every step into inference mode. Mirrors `torch.nn.Module.eval`."""
+        return self.train(False)
 
     def __repr__(self) -> str:
         """Provides a concise string representation of the pipeline."""

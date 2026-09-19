@@ -69,7 +69,7 @@ from .normalize_processor import (
     UnnormalizerProcessorStep,
     hotswap_stats,
 )
-from .observation_processor import VanillaObservationProcessorStep
+from .observation_processor import StateDropoutProcessorStep, VanillaObservationProcessorStep
 from .pipeline import (
     ActionProcessorStep,
     ComplementaryDataProcessorStep,
@@ -172,5 +172,6 @@ __all__ = [
     "to_absolute_actions",
     "to_relative_actions",
     "UnnormalizerProcessorStep",
+    "StateDropoutProcessorStep",
     "VanillaObservationProcessorStep",
 ]

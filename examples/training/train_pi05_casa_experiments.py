@@ -65,6 +65,30 @@ FAIRNESS INVARIANTS (do not change per-arm)
   chunk_size, save/eval cadence. The ONLY per-arm degrees of freedom are the
   trainable-parameter set and the LR policy above.
 
+REGULARIZATION (identical in every arm -- see COLOR_JITTER / STATE_DROPOUT_P)
+  * Colour jitter, GR00T N1.5 defaults: brightness 0.3, contrast 0.4,
+    saturation 0.5, hue 0.08, applied to every training frame as ONE
+    torchvision ColorJitter. Dataset-side, so training only. Note this replaces
+    lerobot's default ImageTransformsConfig, which would instead sample a
+    subset of six independent transforms per frame -- different semantics.
+  * State dropout p=0.1, matching GR00T N1.5's `state_dropout_prob`: one draw
+    per sample, and when it fires the WHOLE state vector is zeroed -- all-or-
+    nothing, never per-dimension. ~1 sample in 10 must therefore act on vision
+    alone, which is the point (it is a much stronger intervention than
+    per-dimension jitter would be). Applied between normalization and pi05's
+    state discretization. QUANTILES maps [q01, q99] to [-1, 1], so a dropped
+    state is the midpoint of each joint's observed range rather than the
+    "every joint at 0 radians" that zeroing raw units would mean; in pi05's
+    prompt it discretizes to a constant run of bin-128 tokens (verified), so
+    "state withheld" is a pattern the model can condition on. No inverted-
+    dropout rescaling -- nothing is partially kept. Implemented as
+    StateDropoutProcessorStep, inert unless the training loop calls
+    `preprocessor.train()` -- important, since the same preprocessor is reused
+    for in-loop eval and is written into every checkpoint.
+  Both are worth having here specifically because coffee is ~81 epochs over 56
+  demonstrations (see DATA below); they are regularizers against memorisation,
+  not accuracy tricks.
+
 VERIFICATION NOTES (answers to the plumbing questions this file used to TODO)
   1. Module paths were read off `policies/pi05/modeling_pi05.py`. The real
      parameter tree is
@@ -214,6 +238,7 @@ from lerobot.configs import FeatureType, PolicyFeature
 from lerobot.configs.default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import NormalizationMode
+from lerobot.transforms import ImageTransformConfig, ImageTransformsConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from lerobot.envs.configs import RoboCasaEnv
 from lerobot.optim import (
@@ -273,6 +298,46 @@ ADAM_BETAS = (0.9, 0.95)
 ADAM_EPS = 1e-8
 WEIGHT_DECAY = 0.01                # preset value; openpi's ~0 (1e-10) is NOT used
 GRAD_CLIP_NORM = 1.0
+
+# ----------------------------------------------------------------------------
+# Regularization (a FAIRNESS INVARIANT -- identical in every arm, or the arm
+# comparison is confounded by how much augmentation each arm saw).
+#
+# Colour jitter: GR00T N1.5's finetuning defaults. torchvision's ColorJitter
+# reads a float `b` as "sample the factor uniformly from [max(0,1-b), 1+b]",
+# so these give brightness [0.7,1.3], contrast [0.6,1.4], saturation [0.5,1.5]
+# and hue [-0.08,0.08]. NOTE this is deliberately NOT lerobot's default
+# ImageTransformsConfig, which samples a SUBSET of {brightness, contrast,
+# saturation, hue, sharpness, affine} per frame as independent transforms. One
+# ColorJitter with all four parameters -- always applied, jointly, in random
+# internal order -- is what GR00T does and is the intended semantics here.
+# Applied dataset-side, i.e. to training frames only; eval observations come
+# from the env and never pass through this.
+COLOR_JITTER = {"brightness": 0.3, "contrast": 0.4, "saturation": 0.5, "hue": 0.08}
+
+# State dropout, GR00T N1.5 semantics: with this probability a training sample has its
+# WHOLE normalized state replaced by zeros (one draw per sample, all-or-nothing -- not
+# per-dimension noise). So at p=0.1 roughly one sample in ten must act on vision alone.
+# Guards against the policy leaning on proprioception instead of vision, which matters
+# here because ~81 epochs over 56 demonstrations is ample opportunity to memorise joint
+# trajectories. Training only; see StateDropoutProcessorStep.
+STATE_DROPOUT_P = 0.1
+
+
+def make_image_transforms(color_jitter: dict[str, float] | None) -> ImageTransformsConfig:
+    """One always-applied ColorJitter, matching GR00T rather than lerobot's subset sampler."""
+    if not color_jitter:
+        return ImageTransformsConfig(enable=False)
+    return ImageTransformsConfig(
+        enable=True,
+        max_num_transforms=1,   # with a single transform in `tfs`, this means "always apply it"
+        random_order=False,
+        tfs={
+            "color_jitter": ImageTransformConfig(
+                weight=1.0, type="ColorJitter", kwargs=dict(color_jitter)
+            )
+        },
+    )
 
 # ----------------------------------------------------------------------------
 # LoRA target patterns (PEFT matches `target_modules` with `re.fullmatch` on the
@@ -617,9 +682,13 @@ def make_config(
     seed: int,
     eval_freq: int = EVAL_FREQ,
     steps: int = TOTAL_STEPS,
+    color_jitter: dict[str, float] | None = None,
+    state_dropout_p: float = STATE_DROPOUT_P,
 ) -> TrainPipelineConfig:
     spec = EXPERIMENTS[experiment]
     task_spec = TASKS[task]
+    if color_jitter is None:
+        color_jitter = COLOR_JITTER
     metadata = LeRobotDatasetMetadata(task_spec.dataset)
     action_dim = metadata.features["action"]["shape"][0]
     state_dim = metadata.features["observation.state"]["shape"][0]
@@ -652,6 +721,7 @@ def make_config(
             # intersection) for no benefit here.
             repo_id=task_spec.dataset,
             video_backend="pyav",
+            image_transforms=make_image_transforms(color_jitter),
         ),
         env=env,
         job_name=f"sft_arms_{task_spec.name}_{spec.name}_lrx{lr_scale:g}_seed{seed}",
@@ -683,6 +753,7 @@ def make_config(
             # whole matrix (that axis is retired; padded 32-dim action space,
             # pretrained action projections finetuned).
             use_category_specific_action_proj=False,
+            state_dropout_p=state_dropout_p,
             normalization_mapping={
                 "VISUAL": NormalizationMode.IDENTITY,
                 "STATE": NormalizationMode.QUANTILES,
@@ -866,18 +937,65 @@ def parse_args() -> argparse.Namespace:
         "checkpoint selection runs post-hoc either way.",
     )
     parser.add_argument(
+        "--color-jitter-params",
+        nargs="*",
+        metavar="NAME VALUE",
+        default=None,
+        help="Colour-jitter parameters as alternating name/value pairs, e.g. "
+        "`--color-jitter-params brightness 0.3 contrast 0.4 saturation 0.5 hue 0.08` "
+        f"(the default: {COLOR_JITTER}). Pass with no values to disable augmentation.",
+    )
+    parser.add_argument(
+        "--state-dropout-p",
+        type=float,
+        default=STATE_DROPOUT_P,
+        help="Probability that a training sample has its entire state zeroed, GR00T-style "
+        f"(default {STATE_DROPOUT_P}; 0 disables).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Build policy + optimizer and assert this arm's trainable set, then exit.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.color_jitter = parse_color_jitter(args.color_jitter_params)
+    return args
+
+
+_COLOR_JITTER_KEYS = ("brightness", "contrast", "saturation", "hue")
+
+
+def parse_color_jitter(pairs: list[str] | None) -> dict[str, float] | None:
+    """`["brightness", "0.3", "hue", "0.08"]` -> `{"brightness": 0.3, "hue": 0.08}`.
+
+    None (flag absent) means "use COLOR_JITTER"; an empty list means "no augmentation".
+    """
+    if pairs is None:
+        return None
+    if len(pairs) == 0:
+        return {}
+    if len(pairs) % 2 != 0:
+        raise ValueError(f"--color-jitter-params needs name/value pairs, got {len(pairs)} items: {pairs}")
+    parsed: dict[str, float] = {}
+    for name, value in zip(pairs[::2], pairs[1::2], strict=True):
+        if name not in _COLOR_JITTER_KEYS:
+            raise ValueError(f"Unknown colour-jitter parameter {name!r}; expected one of {_COLOR_JITTER_KEYS}.")
+        parsed[name] = float(value)
+    return parsed
 
 
 if __name__ == "__main__":
     args = parse_args()
     register_third_party_plugins()
     cfg = make_config(
-        args.experiment, args.task, args.lr_scale, args.seed, args.eval_freq, args.steps
+        args.experiment,
+        args.task,
+        args.lr_scale,
+        args.seed,
+        args.eval_freq,
+        args.steps,
+        color_jitter=args.color_jitter,
+        state_dropout_p=args.state_dropout_p,
     )
     if args.dry_run:
         run_dry_run(cfg, EXPERIMENTS[args.experiment])

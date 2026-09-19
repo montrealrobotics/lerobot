@@ -99,6 +99,9 @@ class PI05Config(PreTrainedConfig):
     # trainable. This is the complement of `train_expert_only`, which freezes all of PaliGemma.
     # Ignored when `train_expert_only` is set, since that already freezes the language model.
     freeze_llm: bool = False
+    # Probability that a training sample has its ENTIRE normalized proprioceptive state
+    # replaced with zeros (0 disables).
+    state_dropout_p: float = 0.0
     use_category_specific_action_proj: bool = False
     category_specific_action_proj_type: Literal["linear", "mlp"] = "linear"
     max_num_embodiments: int = 32

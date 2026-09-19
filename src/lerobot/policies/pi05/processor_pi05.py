@@ -34,6 +34,7 @@ from lerobot.processor import (
     RelativeActionsProcessorStep,
     RenameObservationsProcessorStep,
     RoutedNormalizerProcessorStep,
+    StateDropoutProcessorStep,
     RoutedUnnormalizerProcessorStep,
     TokenizerProcessorStep,
     UnnormalizerProcessorStep,
@@ -394,6 +395,10 @@ def make_pi05_pre_post_processors(
         # NOTE: NormalizerProcessorStep MUST come before Pi05PrepareStateTokenizerProcessorStep
         # because the tokenizer step expects normalized state in [-1, 1] range for discretization
         normalizer_step,
+        # Must sit AFTER the normalizer (so a dropped dim reads as the dataset median,
+        # not as "joint at zero") and BEFORE discretization (which consumes the state).
+        # Inert until the training loop calls preprocessor.train().
+        StateDropoutProcessorStep(p=config.state_dropout_p),
         Pi05PrepareStateTokenizerProcessorStep(max_state_dim=config.max_state_dim),
         TokenizerProcessorStep(
             tokenizer_name="google/paligemma-3b-pt-224",
