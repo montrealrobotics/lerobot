@@ -412,12 +412,14 @@ class PaliGemmaWithExpertModel(
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
+        freeze_llm: bool = False,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
+        self.freeze_llm = freeze_llm
 
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -483,6 +485,14 @@ class PaliGemmaWithExpertModel(
             if any(selector in name for selector in params_to_keep_float32):
                 param.data = param.data.to(dtype=torch.float32)
 
+    def _llm_modules(self):
+        """PaliGemma's language model, plus the lm_head that is tied to its embeddings."""
+        modules = [self.paligemma.model.language_model]
+        lm_head = getattr(self.paligemma, "lm_head", None)
+        if lm_head is not None:
+            modules.append(lm_head)
+        return modules
+
     def _set_requires_grad(self):
         if self.freeze_vision_encoder:
             self.paligemma.model.vision_tower.eval()
@@ -492,6 +502,13 @@ class PaliGemmaWithExpertModel(
             self.paligemma.eval()
             for param in self.paligemma.parameters():
                 param.requires_grad = False
+        elif self.freeze_llm:
+            # Complement of train_expert_only: freeze the language model but leave the
+            # vision tower and multimodal projector trainable.
+            for module in self._llm_modules():
+                module.eval()
+                for param in module.parameters():
+                    param.requires_grad = False
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -499,6 +516,9 @@ class PaliGemmaWithExpertModel(
             self.paligemma.model.vision_tower.eval()
         if self.train_expert_only:
             self.paligemma.eval()
+        elif self.freeze_llm:
+            for module in self._llm_modules():
+                module.eval()
 
     def embed_image(self, image: torch.Tensor):
         # Vision tower and multi_modal_projector are kept in float32 (params_to_keep_float32).
@@ -637,6 +657,7 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
+            freeze_llm=config.freeze_llm,
         )
 
         if config.use_category_specific_action_proj:

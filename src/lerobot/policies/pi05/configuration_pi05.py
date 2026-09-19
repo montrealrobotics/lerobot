@@ -94,6 +94,11 @@ class PI05Config(PreTrainedConfig):
     # Finetuning settings
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
+    # Freeze ONLY PaliGemma's language model (its embeddings, decoder layers, final norm and the
+    # tied lm_head), leaving the vision tower, the multimodal projector and the action expert
+    # trainable. This is the complement of `train_expert_only`, which freezes all of PaliGemma.
+    # Ignored when `train_expert_only` is set, since that already freezes the language model.
+    freeze_llm: bool = False
     use_category_specific_action_proj: bool = False
     category_specific_action_proj_type: Literal["linear", "mlp"] = "linear"
     max_num_embodiments: int = 32

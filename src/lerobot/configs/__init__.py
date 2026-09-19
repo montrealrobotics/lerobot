@@ -21,6 +21,13 @@ are intentionally NOT re-exported here to avoid circular dependencies
 Import them directly: ``from lerobot.configs.train import TrainPipelineConfig``
 """
 
+import typing
+from collections.abc import Sequence
+from typing import Any
+
+from draccus.parsers.decoding import decode as _draccus_decode
+from draccus.utils import DecodingError
+
 from .dataset import DatasetRecordConfig
 from .default import DatasetConfig, EvalConfig, PeftConfig, WandBConfig
 from .policies import PreTrainedConfig
@@ -31,6 +38,28 @@ from .types import (
     PolicyFeature,
     RTCAttentionSchedule,
 )
+
+
+def _decode_literal(cls: Any, raw_value: Any, path: Sequence[str] = ()) -> Any:
+    """Decode a ``typing.Literal[...]`` field.
+
+    draccus 0.10 has no decoder for ``Literal``, so any config dataclass with a
+    ``Literal`` field fails to round-trip: saving works (the value is a plain str)
+    but ``from_pretrained`` raises ``DecodingError``. That breaks checkpoint reload,
+    ``--resume`` and offline eval for every policy that uses one (currently pi05's
+    and smolvla's ``category_specific_action_proj_type``).
+
+    ``typing.get_origin(Literal["a", "b"])`` is ``typing.Literal``, and draccus
+    dispatches on the origin, so one registration covers every ``Literal`` field.
+    """
+    allowed = typing.get_args(cls)
+    if raw_value not in allowed:
+        raise DecodingError(path, f"{raw_value!r} is not one of {allowed}")
+    return raw_value
+
+
+_draccus_decode.register(typing.Literal, _decode_literal, include_subclasses=True)
+
 
 __all__ = [
     # Types
