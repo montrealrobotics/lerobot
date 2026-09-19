@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 import importlib
+from collections.abc import Callable
 from dataclasses import dataclass, field, fields
 from typing import Any
 
@@ -652,6 +653,15 @@ class RoboCasaEnv(EnvConfig):
     # seed; setting both fixes the scene so the per-sub-env seed varies only object placement.
     layout_id: int | None = None
     style_id: int | None = None
+    # Construction seed of each eval sub-env. None = sub-env i gets seed i, i.e. one kitchen per
+    # sub-env. Repeating a seed puts every sub-env in the SAME kitchen, which only makes the
+    # sub-envs differ if `placement_ids` moves the task object.
+    scene_seeds: list[int] | None = None
+    # Object-placement bank (JSON from scripts/build_lamp_placement_bank.py). With
+    # `placement_ids`, sub-env i is pinned to banked placement `placement_ids[i]`: the object is
+    # restored to that pose on every reset, so each sub-env is one fixed start condition.
+    placement_bank: str | None = None
+    placement_ids: list[str] | None = None
     episode_length: int | None = None  # set inside the env for each task
     obs_type: str = "pixels_agent_pos"
     render_mode: str = "rgb_array"
@@ -681,6 +691,17 @@ class RoboCasaEnv(EnvConfig):
         dims = _robot_dims.get(self.robot)
         if dims is None:
             raise ValueError(f"Unsupported robot '{self.robot}'. Supported: {list(_robot_dims.keys())}")
+
+        if self.placement_ids is not None:
+            if self.placement_bank is None:
+                raise ValueError("RoboCasaEnv.placement_ids needs placement_bank (the bank JSON).")
+            # A banked placement belongs to one scene, so the sub-env's kitchen must be spelled
+            # out rather than inherited from its index.
+            if self.scene_seeds is None or len(self.scene_seeds) != len(self.placement_ids):
+                raise ValueError(
+                    "RoboCasaEnv.placement_ids needs one scene_seeds entry per placement id; got "
+                    f"scene_seeds={self.scene_seeds}, placement_ids={self.placement_ids}."
+                )
         action_dim = dims["action"]
         state_dim = dims["state"]
 
@@ -759,12 +780,39 @@ class RoboCasaEnv(EnvConfig):
             # Same kitchen for every sub-env, so their differing construction seeds vary only
             # object instance/placement and robot base pose.
             gym_kwargs["ep_metas"] = [dict(ep_meta) for _ in range(n_envs)]
+
+        seeds: list[int] | None = None
+        if self.scene_seeds is not None:
+            if len(self.scene_seeds) < n_envs:
+                raise ValueError(
+                    f"RoboCasaEnv.scene_seeds has {len(self.scene_seeds)} entries but n_envs={n_envs}. "
+                    "Give one construction seed per sub-env (eval batch size)."
+                )
+            seeds = [int(s) for s in self.scene_seeds[:n_envs]]
+
+        wrappers: list[Callable[[gym.Env], gym.Env] | None] | None = None
+        if self.placement_ids is not None:
+            if len(self.placement_ids) < n_envs:
+                raise ValueError(
+                    f"RoboCasaEnv.placement_ids has {len(self.placement_ids)} entries but "
+                    f"n_envs={n_envs}. Give one banked placement per sub-env (eval batch size)."
+                )
+            from .robocasa_placement_bank import load_placement_bank, pinned_placement_wrapper
+
+            assert seeds is not None  # guaranteed by __post_init__
+            bank = load_placement_bank(self.placement_bank)
+            wrappers = [
+                pinned_placement_wrapper(bank, seeds[i], self.placement_ids[i]) for i in range(n_envs)
+            ]
+
         return create_robocasa_envs(
             task=self.task,
             n_envs=n_envs,
             camera_name=self.camera_name,
             gym_kwargs=gym_kwargs,
             env_cls=env_cls,
+            seeds=seeds,
+            wrappers=wrappers,
         )
 
 

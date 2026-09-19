@@ -535,10 +535,17 @@ def _make_env_fns(
     camera_names: list[str],
     gym_kwargs: Mapping[str, Any],
     ep_metas: list[dict[str, Any]] | None = None,
-) -> list[Callable[[], RoboCasaEnv]]:
-    """Build n_envs factory callables for a dataset."""
+    seeds: list[int] | None = None,
+    wrappers: list[Callable[[gym.Env], gym.Env] | None] | None = None,
+) -> list[Callable[[], gym.Env]]:
+    """Build n_envs factory callables for a dataset.
 
-    def _make_env(episode_index: int, **kwargs) -> RoboCasaEnv:
+    ``seeds`` overrides the default "sub-env i is construction seed i" mapping; repeating a seed
+    puts several sub-envs in the same kitchen. ``wrappers[i]``, when given, wraps sub-env i (e.g.
+    to pin it to one banked object placement).
+    """
+
+    def _make_env(episode_index: int, **kwargs) -> gym.Env:
         local_kwargs = dict(kwargs)
 
         # Extract ep_meta for this worker from ep_metas list if provided
@@ -555,19 +562,23 @@ def _make_env_fns(
 
         # Extract seed from ep_meta if present, otherwise use episode_index as default
         seed = local_kwargs.pop("seed", episode_index)
+        if seeds is not None:
+            seed = seeds[episode_index]
 
         # Remove ep_meta from local_kwargs if present (shouldn't be there, but just in case)
         local_kwargs.pop("ep_meta", None)
 
-        return RoboCasaEnv(
+        env: gym.Env = RoboCasaEnv(
             task_name=task_name,
             camera_name=camera_names,
             seed=seed,
             ep_meta=ep_meta,
             **local_kwargs,
         )
+        wrapper = wrappers[episode_index] if wrappers is not None else None
+        return wrapper(env) if wrapper is not None else env
 
-    fns: list[Callable[[], RoboCasaEnv]] = []
+    fns: list[Callable[[], gym.Env]] = []
     for episode_index in range(n_envs):
         fns.append(partial(_make_env, episode_index, **gym_kwargs))
     return fns
@@ -580,6 +591,8 @@ def create_robocasa_envs(
     gym_kwargs: dict[str, Any] | None = None,
     camera_name: str | Sequence[str] = "",
     env_cls: Callable[[Sequence[Callable[[], Any]]], Any] | None = None,
+    seeds: list[int] | None = None,
+    wrappers: list[Callable[[gym.Env], gym.Env] | None] | None = None,
 ) -> dict[str, dict[int, Any]]:
     """
     Create vectorized RoboCasa environments with a consistent return shape.
@@ -597,11 +610,17 @@ def create_robocasa_envs(
             to set a specific seed for that worker.
         camera_name: Camera name(s) to use for observations, overrides gym_kwargs['camera_name'] if provided
         env_cls: Callable that wraps a list of environment factory callables (for vectorization)
+        seeds: Construction seed of each sub-env, overriding the default seed=episode_index.
+            Repeating a seed puts those sub-envs in the same kitchen.
+        wrappers: Per-sub-env gym wrapper to apply, e.g. one banked object placement each.
     """
     if env_cls is None or not callable(env_cls):
         raise ValueError("env_cls must be a callable that wraps a list of environment factory callables.")
     if not isinstance(n_envs, int) or n_envs <= 0:
         raise ValueError(f"n_envs must be a positive int; got {n_envs}.")
+    for name, per_env in (("seeds", seeds), ("wrappers", wrappers)):
+        if per_env is not None and len(per_env) != n_envs:
+            raise ValueError(f"{name} has {len(per_env)} entries, but n_envs={n_envs}.")
 
     gym_kwargs = dict(gym_kwargs or {})
     gym_kwargs_camera_name = gym_kwargs.pop("camera_name", None)
@@ -632,6 +651,8 @@ def create_robocasa_envs(
         camera_names=parsed_camera_names,
         gym_kwargs=gym_kwargs,
         ep_metas=ep_metas,
+        seeds=seeds,
+        wrappers=wrappers,
     )
     if env_cls is gym.vector.AsyncVectorEnv:
         out[suite_name][task_id] = _LazyAsyncVectorEnv(fns)

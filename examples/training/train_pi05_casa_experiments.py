@@ -66,28 +66,11 @@ FAIRNESS INVARIANTS (do not change per-arm)
   trainable-parameter set and the LR policy above.
 
 REGULARIZATION (identical in every arm -- see COLOR_JITTER / STATE_DROPOUT_P)
-  * Colour jitter, GR00T N1.5 defaults: brightness 0.3, contrast 0.4,
+  * Colour jitter: brightness 0.3, contrast 0.4,
     saturation 0.5, hue 0.08, applied to every training frame as ONE
-    torchvision ColorJitter. Dataset-side, so training only. Note this replaces
-    lerobot's default ImageTransformsConfig, which would instead sample a
-    subset of six independent transforms per frame -- different semantics.
-  * State dropout p=0.1, matching GR00T N1.5's `state_dropout_prob`: one draw
-    per sample, and when it fires the WHOLE state vector is zeroed -- all-or-
-    nothing, never per-dimension. ~1 sample in 10 must therefore act on vision
-    alone, which is the point (it is a much stronger intervention than
-    per-dimension jitter would be). Applied between normalization and pi05's
-    state discretization. QUANTILES maps [q01, q99] to [-1, 1], so a dropped
-    state is the midpoint of each joint's observed range rather than the
-    "every joint at 0 radians" that zeroing raw units would mean; in pi05's
-    prompt it discretizes to a constant run of bin-128 tokens (verified), so
-    "state withheld" is a pattern the model can condition on. No inverted-
-    dropout rescaling -- nothing is partially kept. Implemented as
-    StateDropoutProcessorStep, inert unless the training loop calls
-    `preprocessor.train()` -- important, since the same preprocessor is reused
-    for in-loop eval and is written into every checkpoint.
-  Both are worth having here specifically because coffee is ~81 epochs over 56
-  demonstrations (see DATA below); they are regularizers against memorisation,
-  not accuracy tricks.
+    torchvision ColorJitter.
+  * State dropout p=0.1,  one draw per sample, and when it fires the WHOLE state 
+  vector is zeroed .
 
 VERIFICATION NOTES (answers to the plumbing questions this file used to TODO)
   1. Module paths were read off `policies/pi05/modeling_pi05.py`. The real
@@ -138,6 +121,17 @@ VERIFICATION NOTES (answers to the plumbing questions this file used to TODO)
   7. EMA: lerobot's training loop has no EMA of any kind (grep finds no
      `ema_decay`/`EMAModel`). openpi's 0.99 default is simply not in play, so
      all arms are non-EMA and there is nothing to match.
+  8. LAMP EVAL IS PINNED TO ONE KITCHEN. The downstream DSRL run for lightbulb
+     trains and evaluates on placements inside a single scene (construction
+     seed 1 = kitchen L4S8), so in-loop SFT eval mirrors that regime: both eval
+     sub-envs are seed 1 and differ only in where the lamp stands
+     (`LAMP_EVAL_PLACEMENT_IDS`, drawn from the feasibility-checked bank built by
+     `scripts/build_lamp_placement_bank.py --scene_seeds 1`). The placement is
+     re-applied on every reset by `PlacementBankWrapper`, so each sub-env is one
+     fixed start condition and the 20 eval episodes split 10/10 between them.
+     Consequence: in-loop lamp success is a seed-1 number, NOT a cross-kitchen
+     generalization number -- score other kitchens post-hoc with
+     `scripts/eval_sft_on_banks.py`. Coffee is unchanged (sub-env i = seed i).
 
 MEASURED, on lerobot/pi05_base (4,143,404,816 params), H100, synthetic batch:
 
@@ -271,6 +265,30 @@ def _default_output_root() -> Path:
 
 SCRATCH_OUTPUT_ROOT = _default_output_root()
 
+
+def _default_lamp_placement_bank() -> str:
+    """Seed-1 lamp placement bank, overridable with $LEROBOT_LAMP_PLACEMENT_BANK.
+
+    Built by `scripts/build_lamp_placement_bank.py --scene_seeds 1`; see the LAMP EVAL
+    note in the module docstring for why lamp eval is pinned to that one kitchen.
+    """
+    env_path = os.environ.get("LEROBOT_LAMP_PLACEMENT_BANK")
+    if env_path:
+        return env_path
+    mila_root = Path("/network/scratch/a/artur.kuramshin/lerobot/placement_banks")
+    root = mila_root if mila_root.parent.exists() else Path.home() / "scratch" / "lerobot" / "placement_banks"
+    return str(root / "screwlightbulb_xarm6_seed1" / "bank.json")
+
+
+LAMP_PLACEMENT_BANK = _default_lamp_placement_bank()
+
+# The two lamp placements in-loop eval runs, one per eval sub-env, both in kitchen seed 1 (L4S8):
+#   s1_reference -- the scene's own placement, i.e. what every fixed-placement lightbulb run so
+#                   far has trained and evaluated on, so the numbers stay comparable.
+#   s1_train_04  -- 12 cm away along the counter, drawn from the bank's DSRL training pool.
+# Both are feasibility-checked (see the bank's `checks`); swap in any id from the bank.
+LAMP_EVAL_PLACEMENT_IDS = ("s1_reference", "s1_train_04")
+
 # ----------------------------------------------------------------------------
 # Global training constants (fairness invariants -- identical across arms)
 # ----------------------------------------------------------------------------
@@ -279,6 +297,7 @@ WARMUP_STEPS = 1_000
 DECAY_STEPS = TOTAL_STEPS          # cosine completes; same trajectory shape everywhere
 SAVE_FREQ = 1_000                  # dense checkpoint ladder for the selection study
 EVAL_FREQ = 500
+DEFAULT_EVAL_BATCH_SIZE = 2        # eval sub-envs when a task pins no explicit start conditions
 BATCH_SIZE = 32
 
 FULL_FT_PEAK_LR = 2.5e-5           # openpi CosineDecaySchedule default
@@ -413,6 +432,16 @@ class TaskSpec:
     camera_name: str = (
         "robot0_agentview_left,robot0_agentview_right,robot0_eye_in_hand,robot0_agentview_center"
     )
+    # In-loop eval start conditions, one per eval sub-env (the eval batch size is taken from
+    # their length). None = the historical default: sub-env i is construction seed i, so the
+    # sub-envs differ by kitchen AND by whatever object placement that seed happened to draw.
+    eval_scene_seeds: tuple[int, ...] | None = None
+    eval_placement_bank: str | None = None
+    eval_placement_ids: tuple[str, ...] | None = None
+
+    @property
+    def eval_batch_size(self) -> int:
+        return len(self.eval_scene_seeds) if self.eval_scene_seeds else DEFAULT_EVAL_BATCH_SIZE
 
 
 TASKS: dict[str, TaskSpec] = {
@@ -427,6 +456,11 @@ TASKS: dict[str, TaskSpec] = {
         dataset="akuramshin/robocasa_lightbulbscrew_dex_filtered",
         robot="XArm6DexLeapRHOmron",
         robocasa_task="ScrewLightbulb",
+        # Both eval sub-envs are construction seed 1 (kitchen L4S8), differing only in where the
+        # lamp stands -- the regime the downstream DSRL run trains and evaluates in.
+        eval_scene_seeds=(1, 1),
+        eval_placement_bank=LAMP_PLACEMENT_BANK,
+        eval_placement_ids=LAMP_EVAL_PLACEMENT_IDS,
     ),
 }
 
@@ -703,6 +737,11 @@ def make_config(
         # quest_rokoko dex datasets). Read it from metadata so it cannot drift.
         fps=metadata.fps,
         camera_name=task_spec.camera_name,
+        # Pin each eval sub-env to one kitchen + one banked object placement (lamp only;
+        # None for coffee keeps the seed-per-sub-env default).
+        scene_seeds=list(task_spec.eval_scene_seeds) if task_spec.eval_scene_seeds else None,
+        placement_bank=task_spec.eval_placement_bank,
+        placement_ids=list(task_spec.eval_placement_ids) if task_spec.eval_placement_ids else None,
     )
 
     # Scale LRs for the per-arm mini-sweep.
@@ -807,7 +846,9 @@ def make_config(
         save_freq=SAVE_FREQ,
         log_freq=50,
         tolerance_s=1e-3,
-        eval=EvalConfig(n_episodes=20, n_videos=5, batch_size=2),
+        # batch_size is the number of eval sub-envs, i.e. one per start condition in the task
+        # spec; n_episodes is split over them (20 episodes = 10 per lamp placement).
+        eval=EvalConfig(n_episodes=20, n_videos=5, batch_size=task_spec.eval_batch_size),
         batch_size=BATCH_SIZE,
         num_workers=4,
         prefetch_factor=4,

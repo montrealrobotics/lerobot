@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,29 @@ def scene_entries(bank: dict[str, Any], scene_seed: int, group: str) -> list[dic
         ref.setdefault("id", f"s{scene_seed}_reference")
         return [ref]
     return list(scene[group])
+
+
+def find_entry(bank: dict[str, Any], scene_seed: int, entry_id: str) -> dict[str, Any]:
+    """The entry with ``id == entry_id`` in one scene, searched over train/heldout/reference."""
+    groups = ("train", "heldout", "reference")
+    for group in groups:
+        for entry in scene_entries(bank, scene_seed, group):
+            if entry.get("id") == entry_id:
+                return entry
+    known = [e.get("id") for g in groups for e in scene_entries(bank, scene_seed, g)]
+    raise KeyError(f"Placement {entry_id!r} is not in bank scene {scene_seed}; available: {known}")
+
+
+def pinned_placement_wrapper(
+    bank: dict[str, Any], scene_seed: int, entry_id: str
+) -> Callable[[gym.Env], gym.Env]:
+    """``env -> PlacementBankWrapper`` pinned to one banked placement (same pose every reset)."""
+    entry = find_entry(bank, scene_seed, entry_id)
+
+    def wrap(env: gym.Env) -> gym.Env:
+        return PlacementBankWrapper(env, bank, scene_seed, [entry], shuffle=False)
+
+    return wrap
 
 
 # ── Eval cells (shared by the DSRL example and scripts/eval_sft_on_banks.py) ──────────
