@@ -128,6 +128,11 @@ class PeftConfig:
     # fine-tuning.
     r: int = 16
 
+    # LoRA scaling numerator. The effective update is scaled by `lora_alpha / r`, so leaving this unset means
+    # PEFT's `LoraConfig` default of 8 applies, which at r=32 silently scales the adapter by 0.25. Set it
+    # explicitly (commonly `lora_alpha == r`) whenever `r` is changed away from PEFT's default. LORA only.
+    lora_alpha: int | None = None
+
     # Optional per-module rank overrides. This maps module-name patterns to LoRA ranks and is passed through
     # to PEFT's LoraConfig as rank_pattern.
     rank_pattern: dict[str, int] | None = None
