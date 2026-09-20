@@ -69,8 +69,12 @@ REGULARIZATION (identical in every arm -- see COLOR_JITTER / STATE_DROPOUT_P)
   * Colour jitter: brightness 0.3, contrast 0.4,
     saturation 0.5, hue 0.08, applied to every training frame as ONE
     torchvision ColorJitter.
-  * State dropout p=0.1,  one draw per sample, and when it fires the WHOLE state 
-  vector is zeroed .
+  * State dropout p=0.2, one draw per sample, and when it fires the WHOLE state
+    vector is zeroed (GR00T semantics). Raised from 0.1 as of the arm2 runs:
+    ~1 sample in 5 must now act on vision alone. NOTE this is a FAIRNESS
+    INVARIANT -- the completed arm1 runs (jobs 22285902/22285903) were trained
+    at 0.1, so they are NOT comparable to anything trained at 0.2 and must be
+    re-run before any arm1-vs-armN claim.
 
 VERIFICATION NOTES (answers to the plumbing questions this file used to TODO)
   1. Module paths were read off `policies/pi05/modeling_pi05.py`. The real
@@ -295,8 +299,8 @@ LAMP_EVAL_PLACEMENT_IDS = ("s1_reference", "s1_train_04")
 TOTAL_STEPS = 20_000
 WARMUP_STEPS = 1_000
 DECAY_STEPS = TOTAL_STEPS          # cosine completes; same trajectory shape everywhere
-SAVE_FREQ = 1_000                  # dense checkpoint ladder for the selection study
-EVAL_FREQ = 500
+SAVE_FREQ = 2_000                  # dense checkpoint ladder for the selection study
+EVAL_FREQ = 2_000
 DEFAULT_EVAL_BATCH_SIZE = 2        # eval sub-envs when a task pins no explicit start conditions
 BATCH_SIZE = 32
 
@@ -340,7 +344,7 @@ COLOR_JITTER = {"brightness": 0.3, "contrast": 0.4, "saturation": 0.5, "hue": 0.
 # Guards against the policy leaning on proprioception instead of vision, which matters
 # here because ~81 epochs over 56 demonstrations is ample opportunity to memorise joint
 # trajectories. Training only; see StateDropoutProcessorStep.
-STATE_DROPOUT_P = 0.1
+STATE_DROPOUT_P = 0.2
 
 
 def make_image_transforms(color_jitter: dict[str, float] | None) -> ImageTransformsConfig:
@@ -410,17 +414,21 @@ RANDOM_EXTERNAL_IMAGE_KEYS = [
 ]
 
 _ROBOSUITE_CONTROLLER_DIR = Path(robosuite.__file__).parent / "controllers/config/robots"
-_JOINT_POS_CONTROLLERS = {
-    "PandaDexLeapRHOmron": "default_pandadexleaprhomron_joint_pos.json",
-    "XArm6DexLeapRHOmron": "default_xarm6dexleaprhomron_joint_pos.json",
-}
+# Arm joints per robot, used to check the eval action space against the dataset.
+_ARM_JOINTS = {"PandaDexLeapRHOmron": 7, "XArm6DexLeapRHOmron": 6}
+LEAP_HAND_DIMS = 16
 
 
-def joint_pos_controller(robot: str) -> str:
-    path = _ROBOSUITE_CONTROLLER_DIR / _JOINT_POS_CONTROLLERS[robot]
+def resolve_controller(filename: str | None) -> str | None:
+    """Absolute path to a robosuite composite-controller config, or None for the robot default."""
+    if filename is None:
+        return None
+    path = _ROBOSUITE_CONTROLLER_DIR / filename
     if not path.exists():
-        raise FileNotFoundError(f"Joint-position controller config not found for {robot}: {path}")
+        raise FileNotFoundError(f"Controller config not found: {path}")
     return str(path)
+
+
 
 
 @dataclass(frozen=True)
@@ -429,6 +437,14 @@ class TaskSpec:
     dataset: str
     robot: str
     robocasa_task: str
+    # Composite-controller config for EVAL. This is a property of how the DATASET was
+    # collected, not of the robot, so it must be stated per task -- deriving it from the
+    # robot is exactly the bug that produced 0% success on every coffee checkpoint.
+    # None = robosuite's default for the robot (OSC_POSE, delta end-effector).
+    controller_filename: str | None = None
+    # Arm dims the eval controller consumes: the arm's joint count for an absolute
+    # JOINT_POSITION config, 6 (3 pos + 3 rot) for OSC_POSE.
+    arm_action_dim: int = 6
     camera_name: str = (
         "robot0_agentview_left,robot0_agentview_right,robot0_eye_in_hand,robot0_agentview_center"
     )
@@ -450,12 +466,23 @@ TASKS: dict[str, TaskSpec] = {
         dataset="akuramshin/robocasa_coffeepressbutton_dex_augstyle",
         robot="PandaDexLeapRHOmron",
         robocasa_task="CoffeePressButton",
+        # OSC_POSE deltas: the dataset's 22-dim action is 6 end-effector dims + 16 hand.
+        # A Panda under absolute JOINT_POSITION would need 7 arm dims, so this data is
+        # NOT joint targets -- unlike the lamp data. controller=None gives robosuite's
+        # default for this robot, which is default_pandadexleaprhomron.json (OSC_POSE,
+        # input_type=delta), matching how the original coffee run was configured.
+        controller_filename=None,
+        arm_action_dim=6,
     ),
     "lamp": TaskSpec(
         name="lamp",
         dataset="akuramshin/robocasa_lightbulbscrew_dex_filtered",
         robot="XArm6DexLeapRHOmron",
         robocasa_task="ScrewLightbulb",
+        # Absolute joint targets (6 XArm6 joints + 16 hand = 22), collected/relabelled that
+        # way, so eval MUST use the joint-position controller rather than the OSC default.
+        controller_filename="default_xarm6dexleaprhomron_joint_pos.json",
+        arm_action_dim=6,
         # Both eval sub-envs are construction seed 1 (kitchen L4S8), differing only in where the
         # lamp stands -- the regime the downstream DSRL run trains and evaluates in.
         eval_scene_seeds=(1, 1),
@@ -716,6 +743,7 @@ def make_config(
     seed: int,
     eval_freq: int = EVAL_FREQ,
     steps: int = TOTAL_STEPS,
+    save_freq: int = SAVE_FREQ,
     color_jitter: dict[str, float] | None = None,
     state_dropout_p: float = STATE_DROPOUT_P,
 ) -> TrainPipelineConfig:
@@ -727,12 +755,26 @@ def make_config(
     action_dim = metadata.features["action"]["shape"][0]
     state_dim = metadata.features["observation.state"]["shape"][0]
 
+    # The eval controller is only correct if it consumes exactly the action vector the
+    # dataset stores. Training never notices a mismatch (it only reads dataset actions), so
+    # a wrong controller shows up solely as every rollout failing -- which is what happened
+    # when the controller was derived from the robot instead of from the dataset.
+    expected_action_dim = task_spec.arm_action_dim + LEAP_HAND_DIMS
+    if expected_action_dim != action_dim:
+        raise ValueError(
+            f"Task '{task_spec.name}': controller {task_spec.controller_filename or '<robot default>'} "
+            f"consumes {task_spec.arm_action_dim} arm + {LEAP_HAND_DIMS} hand = {expected_action_dim} "
+            f"dims, but dataset '{task_spec.dataset}' stores {action_dim}-dim actions. "
+            f"({task_spec.robot} has {_ARM_JOINTS[task_spec.robot]} arm joints: an absolute "
+            f"JOINT_POSITION config needs that many arm dims, OSC_POSE needs 6.)"
+        )
+
     env = RoboCasaEnv(
         task=task_spec.robocasa_task,
         robot=task_spec.robot,
         # Absolute-joint-target policies must be evaluated with the joint-position
         # controller; the default (None -> OSC_POSE) would be a silent mismatch.
-        controller=joint_pos_controller(task_spec.robot),
+        controller=resolve_controller(task_spec.controller_filename),
         # Eval control_freq must equal the dataset's collection rate (30 Hz for the
         # quest_rokoko dex datasets). Read it from metadata so it cannot drift.
         fps=metadata.fps,
@@ -771,7 +813,13 @@ def make_config(
             push_to_hub=False,
             dtype="bfloat16",
             gradient_checkpointing=True,
-            compile_model=True,
+            # MEASURED: compile_model=True uses PI05Config.compile_mode="max-autotune",
+            # whose CUDA-graph private pools take ~40 GiB ON TOP of the ~45 GiB this run
+            # actually needs -- which OOMs an 80 GiB H100 at batch_size=32. It only
+            # survived earlier smoke tests because those used batch_size=2. Off: 1.68 s
+            # per step, 45.0 GiB peak. Revisit with compile_mode="default" (no cudagraphs)
+            # if the ~9.3 h of pure training per 20k-step run becomes the bottleneck.
+            compile_model=False,
             freeze_vision_encoder=spec.freeze_vision_encoder,
             train_expert_only=spec.train_expert_only,
             freeze_llm=spec.freeze_llm,
@@ -843,7 +891,7 @@ def make_config(
         # In-loop eval is iid-noise only; dual-noise selection runs post-hoc over
         # the checkpoint ladder (see eval_pi05_dual_noise.py).
         eval_freq=eval_freq,
-        save_freq=SAVE_FREQ,
+        save_freq=save_freq,
         log_freq=50,
         tolerance_s=1e-3,
         # batch_size is the number of eval sub-envs, i.e. one per start condition in the task
@@ -957,6 +1005,28 @@ def run_dry_run(cfg: TrainPipelineConfig, spec: ExperimentSpec) -> None:
     print(f"[{spec.name}] dry run OK\n")
 
 
+def apply_smoke_test_overrides(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
+    """Shrink a real run to a few steps so a batch job's whole path is exercised cheaply.
+
+    Deliberately changes ONLY sizes and cadences, never which code runs: the dataloader
+    (with colour jitter), state dropout, forward/backward, the optimizer step, a
+    checkpoint write, an environment rollout and a wandb log all still happen. Anything
+    that would crash a 12h job in its first minutes crashes here in a few.
+    """
+    cfg.steps = 6
+    cfg.save_freq = 3
+    cfg.eval_freq = 3
+    cfg.log_freq = 1
+    cfg.batch_size = 2
+    cfg.num_workers = 2
+    cfg.eval.n_episodes = 2
+    cfg.eval.batch_size = 2
+    cfg.eval.n_videos = 1
+    cfg.job_name = f"SMOKETEST_{cfg.job_name}"
+    cfg.output_dir = make_timestamped_output_dir(SCRATCH_OUTPUT_ROOT / "smoketest", cfg)
+    return cfg
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experiment", choices=tuple(EXPERIMENTS), default="arm1_full_ft")
@@ -994,9 +1064,24 @@ def parse_args() -> argparse.Namespace:
         f"(default {STATE_DROPOUT_P}; 0 disables).",
     )
     parser.add_argument(
+        "--save-freq",
+        type=int,
+        default=SAVE_FREQ,
+        help=f"Checkpoint cadence (default {SAVE_FREQ}). A full-FT checkpoint is 23 GiB "
+        "(8.7 weights + 14.1 AdamW state), so steps/save_freq rungs is also a disk budget. "
+        "Keep it identical across arms -- it is a declared fairness invariant.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Build policy + optimizer and assert this arm's trainable set, then exit.",
+    )
+    parser.add_argument(
+        "--smoke-test",
+        action="store_true",
+        help="Run a few real training steps with a checkpoint, an eval rollout and a "
+        "wandb log, into <output root>/smoketest/. For validating a batch job's "
+        "environment before queueing 12h of it.",
     )
     args = parser.parse_args()
     args.color_jitter = parse_color_jitter(args.color_jitter_params)
@@ -1035,9 +1120,12 @@ if __name__ == "__main__":
         args.seed,
         args.eval_freq,
         args.steps,
+        save_freq=args.save_freq,
         color_jitter=args.color_jitter,
         state_dropout_p=args.state_dropout_p,
     )
+    if args.smoke_test:
+        cfg = apply_smoke_test_overrides(cfg)
     if args.dry_run:
         run_dry_run(cfg, EXPERIMENTS[args.experiment])
     else:

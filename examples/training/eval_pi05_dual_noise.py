@@ -58,7 +58,7 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from train_pi05_casa_experiments import TASKS, joint_pos_controller  # noqa: E402
+from train_pi05_casa_experiments import TASKS, resolve_controller  # noqa: E402
 
 NOISE_MODES = ("iid", "duplicated")
 
@@ -146,7 +146,9 @@ def evaluate_step(
     env_cfg = RoboCasaEnv(
         task=task_spec.robocasa_task,
         robot=task_spec.robot,
-        controller=joint_pos_controller(task_spec.robot),
+        # Per-task, not per-robot: coffee is OSC_POSE deltas and lamp is absolute joint
+        # targets, so deriving this from the robot silently scrambles the action vector.
+        controller=resolve_controller(task_spec.controller_filename),
         fps=_fps_from_train_config(pretrained_dir),
         camera_name=task_spec.camera_name,
     )
