@@ -12,6 +12,26 @@ Unchanged pi05 architecture in every arm (no category-specific encoder/decoder).
 Arms differ ONLY in which parameters train and at what learning rate.
 
 ARMS AND HYPOTHESES
+  arm0_expert_only        H0 / control. All of PaliGemma frozen -- language model,
+                          SigLIP AND the multimodal projector -- so only the action
+                          expert, the time MLPs and the action projections train.
+                          This is the trainable set of the 2026-08-31 lamp run, the
+                          only configuration so far measured above zero on lamp
+                          (6.0% at 20k over 50 episodes, re-measured 2026-09-20
+                          alongside arm1's 0/100; see scripts/eval_lamp_protocol_ab.py).
+                          Against arm1 it isolates the trainable set exactly -- same
+                          LR, schedule, augmentation, seed and data. Against arm2 it
+                          isolates SigLIP, so arm1 -> arm2 -> arm0 is a nested ladder
+                          ("freeze nothing" / "freeze the LM" / "freeze the LM and the
+                          vision path"). It ALSO bounds overfitting: 695M trainable on
+                          33 lamp demos vs arm1's 4.14B.
+                          NOTE it does NOT reproduce the old run, which used 5e-5 FLAT
+                          against a 30k horizon, no colour jitter, no state dropout and
+                          seed 1000. It is the matrix-invariant version of that
+                          trainable set, so if arm0 also scores 0 the trainable set is
+                          ruled OUT and LR/schedule/augmentation are what remain --
+                          reach those with --lr-scale 2 --color-jitter-params
+                          --state-dropout-p 0.
   arm1_full_ft            Baseline. Everything trains at the openpi default LR.
   arm2_frozen_llm         H1: does the pretrained LANGUAGE/semantic representation
                           need to move for a new embodiment? PaliGemma's language
@@ -20,8 +40,13 @@ ARMS AND HYPOTHESES
                           "keep the LM fixed" from "keep the whole VLM fixed": the
                           latter also freezes SigLIP, which Ferchau Finding 3 makes
                           the single most damaging choice (ATP 0.14 frozen vs 0.74
-                          full-FT), so a train_expert_only arm would confound the
-                          two and would be predicted to lose for the wrong reason.
+                          full-FT). arm2 is therefore the clean LM-only contrast and
+                          arm0, which does freeze SigLIP, is carried as its own rung
+                          rather than folded in, so the two axes stay readable.
+                          (Earlier revisions omitted a frozen-VLM arm altogether on
+                          the grounds that it "would lose for the wrong reason" --
+                          which is exactly the prediction the lamp measurements
+                          contradict, so it is now carried as arm0.)
                           Requires PI05Config.freeze_llm, added for this study.
   arm3_lora_r32           H2: does constraining updates preserve pretrained
                           structure that pays off in steerability / RL stability
@@ -140,6 +165,7 @@ VERIFICATION NOTES (answers to the plumbing questions this file used to TODO)
 MEASURED, on lerobot/pi05_base (4,143,404,816 params), H100, synthetic batch:
 
                         trainable          resident   optimizer groups (peak LR)
+  arm0_expert_only  ~695M (~16.8%)            4.14B   one @ 2.5e-5    [derived]
   arm1_full_ft      4.14B (100.0%)            4.14B   one @ 2.5e-5
   arm2_frozen_llm   1.11B ( 26.8%)            4.14B   one @ 2.5e-5
   arm3_lora_r32      468M ( 10.2%)            4.61B   vlm_lora 39.2M @ 2.5e-4
@@ -149,6 +175,10 @@ MEASURED, on lerobot/pi05_base (4,143,404,816 params), H100, synthetic batch:
   arm4              1.15B ( 21.7%)            5.29B   vlm_lora 39.2M @ 2.5e-4
                                                       expert 693M, vision 414.8M,
                                                       action_proj @ 2.5e-5
+
+  arm0's figure is DERIVED, not measured: arm2's 1.11B minus the vision tower's
+  414.8M, since arm0 is arm2 without the vision path. `--dry-run` prints the real
+  number and asserts the partition, so run it once before queueing the arm.
 
   Resident > 4.14B because PEFT's `modules_to_save` deep-copies each full-FT
   island (a frozen `original_module` plus the trainable copy): +0.47B for arm3,
@@ -197,6 +227,10 @@ DATA, measured from dataset metadata:
     not the "~50 per task" in the project description.
 
 EXACT TRAINABLE PARTITIONS (asserted by --dry-run, tensor counts):
+  arm0_expert_only gemma_expert 201, time_mlp 4, action_proj 4  (= 209, nothing
+                   else) -- arm2's 648 minus vision_tower 437 and
+                   multi_modal_projector 2. It additionally asserts that nothing
+                   under `paligemma` trains at all.
   arm2_frozen_llm  vision_tower 437, multi_modal_projector 2, gemma_expert 201,
                    time_mlp 4, action_proj 4  (= 648, nothing else)
   arm3_lora_r32    lora_ 508, vision_tower 437, multi_modal_projector 2,
@@ -521,6 +555,52 @@ class ExperimentSpec:
 
 
 EXPERIMENTS: dict[str, ExperimentSpec] = {
+    # ------------------------------------------------------------------ arm 0
+    "arm0_expert_only": ExperimentSpec(
+        name="arm0_expert_only",
+        # train_expert_only freezes ALL of PaliGemma (LM + SigLIP + projector), so
+        # freeze_vision_encoder is redundant here -- see PI05Pytorch._set_requires_grad,
+        # where the train_expert_only branch is taken and the freeze_llm branch is not.
+        # It is set anyway to mirror the 2026-08-31 run's config field-for-field, so a
+        # diff of the two train_config.json files shows only the intended differences.
+        freeze_vision_encoder=True,
+        train_expert_only=True,
+        peft=None,
+        # Matrix LR, NOT the old run's 5e-5: arm0 exists to isolate the trainable set
+        # against arm1, which only works if every other knob is identical. --lr-scale 2
+        # reaches the old peak (but not its flat shape; DECAY_FRACTION still applies).
+        peak_lr=FULL_FT_PEAK_LR,
+        policy_optimizer_lr=FULL_FT_PEAK_LR,
+        expect_trainable=(
+            "gemma_expert",
+            "time_mlp_in",
+            "action_in_proj",
+            "action_out_proj",
+        ),
+        # The whole point of the arm: nothing in the VLM moves. "paligemma." also
+        # covers the vision tower and the projector, which arm2 leaves trainable.
+        expect_frozen=(
+            "paligemma.model.language_model",
+            "paligemma.model.vision_tower",
+            "paligemma.model.multi_modal_projector",
+            "paligemma.lm_head",
+        ),
+        expect_trainable_only=(
+            r"gemma_expert",
+            r"time_mlp_(in|out)",
+            r"action_(in|out)_proj",
+        ),
+        notes=(
+            "Frozen VLM, expert-only -- the trainable set of the 2026-08-31 lamp "
+            "run (6.0% at 20k, the only non-zero lamp number measured so far) but "
+            "under this file's invariants. arm1 minus arm0 is the trainable set; "
+            "arm2 minus arm0 is SigLIP. Cheapest arm to train and the smallest "
+            "trainable set, so it also bounds the overfitting hypothesis: arm1's "
+            "final train loss is LOWER than the old run's (0.0093 vs 0.0263) while "
+            "its rollout success is 0, which is what 4.14B params over 33 demos "
+            "and ~20 epochs would look like if it were memorising."
+        ),
+    ),
     # ------------------------------------------------------------------ arm 1
     "arm1_full_ft": ExperimentSpec(
         name="arm1_full_ft",
