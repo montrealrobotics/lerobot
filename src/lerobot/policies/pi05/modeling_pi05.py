@@ -1127,28 +1127,23 @@ class PI05Policy(PreTrainedPolicy):
         # Load state dict (expects keys with "model." prefix)
         try:
             print(f"Loading model from: {pretrained_name_or_path}")
-            try:
-                from transformers.utils import cached_file
+            from transformers.utils import cached_file
 
-                resolved_file = cached_file(
-                    pretrained_name_or_path,
-                    "model.safetensors",
-                    cache_dir=kwargs.get("cache_dir"),
-                    force_download=kwargs.get("force_download", False),
-                    resume_download=kwargs.get("resume_download"),
-                    proxies=kwargs.get("proxies"),
-                    token=kwargs.get("token"),
-                    revision=kwargs.get("revision"),
-                    local_files_only=kwargs.get("local_files_only", False),
-                )
-                from safetensors.torch import load_file
+            resolved_file = cached_file(
+                pretrained_name_or_path,
+                "model.safetensors",
+                cache_dir=kwargs.get("cache_dir"),
+                force_download=kwargs.get("force_download", False),
+                resume_download=kwargs.get("resume_download"),
+                proxies=kwargs.get("proxies"),
+                token=kwargs.get("token"),
+                revision=kwargs.get("revision"),
+                local_files_only=kwargs.get("local_files_only", False),
+            )
+            from safetensors.torch import load_file
 
-                original_state_dict = load_file(resolved_file)
-                print("✓ Loaded state dict from model.safetensors")
-            except Exception as e:
-                print(f"Could not load state dict from remote files: {e}")
-                print("Returning model without loading pretrained weights")
-                return model
+            original_state_dict = load_file(resolved_file)
+            print("✓ Loaded state dict from model.safetensors")
 
             # First, fix any key differences (see openpi model.py, _fix_pytorch_state_dict_keys)
             fixed_state_dict = model._fix_pytorch_state_dict_keys(original_state_dict, model.config)
@@ -1197,7 +1192,14 @@ class PI05Policy(PreTrainedPolicy):
                 print("All keys loaded successfully!")
 
         except Exception as e:
-            print(f"Warning: Could not load state dict: {e}")
+            # Never return `model` from here. It is freshly constructed, i.e. randomly
+            # initialised, and for a PEFT checkpoint (which saves only adapters +
+            # modules_to_save) the base weights can come from nowhere else -- so swallowing this
+            # silently scores a random network and reports the result as if it were real. It also
+            # makes `strict` inert, because load_state_dict's RuntimeError lands here too.
+            raise RuntimeError(
+                f"Failed to load pretrained weights for {pretrained_name_or_path!r}: {e}"
+            ) from e
 
         return model
 
