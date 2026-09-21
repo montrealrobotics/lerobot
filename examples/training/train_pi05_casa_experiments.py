@@ -4,255 +4,107 @@
 # Licensed under the Apache License, Version 2.0.
 
 """
-SFT experiment arms for: "What is the best way to adapt a pre-trained VLA to a
-new embodiment (LEAP hand) in the low-data regime, when the endpoint is a
-steering-RL (DSRL) pipeline?"
+SFT arms for: "How should a pretrained VLA be adapted to a new embodiment (LEAP hand)
+in the low-data regime, when the endpoint is steering RL (DSRL)?"
 
-Unchanged pi05 architecture in every arm (no category-specific encoder/decoder).
-Arms differ ONLY in which parameters train and at what learning rate.
+Every arm uses the stock pi05 architecture (no category-specific action projections) and
+differs ONLY in which parameters train and at what learning rate.
 
-ARMS AND HYPOTHESES
-  arm0_expert_only        H0 / control. All of PaliGemma frozen -- language model,
-                          SigLIP AND the multimodal projector -- so only the action
-                          expert, the time MLPs and the action projections train.
-                          This is the trainable set of the 2026-08-31 lamp run, the
-                          only configuration so far measured above zero on lamp
-                          (6.0% at 20k over 50 episodes, re-measured 2026-09-20
-                          alongside arm1's 0/100; see scripts/eval_lamp_protocol_ab.py).
-                          Against arm1 it isolates the trainable set exactly -- same
-                          LR, schedule, augmentation, seed and data. Against arm2 it
-                          isolates SigLIP, so arm1 -> arm2 -> arm0 is a nested ladder
-                          ("freeze nothing" / "freeze the LM" / "freeze the LM and the
-                          vision path"). It ALSO bounds overfitting: 695M trainable on
-                          33 lamp demos vs arm1's 4.14B.
-                          NOTE it does NOT reproduce the old run, which used 5e-5 FLAT
-                          against a 30k horizon, no colour jitter, no state dropout and
-                          seed 1000. It is the matrix-invariant version of that
-                          trainable set, so if arm0 also scores 0 the trainable set is
-                          ruled OUT and LR/schedule/augmentation are what remain --
-                          reach those with --lr-scale 2 --color-jitter-params
-                          --state-dropout-p 0.
-  arm1_full_ft            Baseline. Everything trains at the openpi default LR.
-  arm2_frozen_llm         H1: does the pretrained LANGUAGE/semantic representation
-                          need to move for a new embodiment? PaliGemma's language
-                          model is frozen; SigLIP, the multimodal projector and the
-                          whole action expert full-FT. This deliberately separates
-                          "keep the LM fixed" from "keep the whole VLM fixed": the
-                          latter also freezes SigLIP, which Ferchau Finding 3 makes
-                          the single most damaging choice (ATP 0.14 frozen vs 0.74
-                          full-FT). arm2 is therefore the clean LM-only contrast and
-                          arm0, which does freeze SigLIP, is carried as its own rung
-                          rather than folded in, so the two axes stay readable.
-                          (Earlier revisions omitted a frozen-VLM arm altogether on
-                          the grounds that it "would lose for the wrong reason" --
-                          which is exactly the prediction the lamp measurements
-                          contradict, so it is now carried as arm0.)
-                          Requires PI05Config.freeze_llm, added for this study.
-  arm3_lora_r32           H2: does constraining updates preserve pretrained
-                          structure that pays off in steerability / RL stability
-                          / generalization? Ferchau-matched config (LoRA r=32
-                          uniform on VLM-LM + expert, SigLIP + projector
-                          full-FT) which matches full-FT at the SFT endpoint --
-                          so any downstream difference vs arm1 is pure hidden-
-                          property signal.
-  arm4_lora_vlm_full_expert  (stretch) Intermediate: LoRA'd VLM-LM, full-FT
-                          expert. Run only if arms 1-3 are on track.
+  Study design, DSRL half, open questions   SFT_ARMS_DSRL.md
+  How to run it, cluster setup, gotchas     SFT_ARMS_RUNBOOK.md
 
-LEARNING-RATE POLICY (sources: openpi defaults; LWR = "LoRA Without Regret",
-Schulman et al. / Thinking Machines blog 2025; Ferchau et al. arXiv:2607.10172)
-  * Full-FT params: 2.5e-5 peak (openpi CosineDecaySchedule default).
-  * LoRA params: 10x the full-FT LR => 2.5e-4 (LWR's central prescription;
-    Ferchau et al. did NOT do this -- they reused one LR everywhere -- which
-    their own limitations section partially concedes via the alpha/r issue).
-  * r=32, alpha=32: at this rank LWR's fixed-alpha and Ferchau's alpha=r
-    conventions coincide (alpha/r = 1), so rsLoRA scaling is not needed.
-  * LoRA placement: ALL linear layers (attention + MLP) of the targeted
-    components, per LWR ("apply to all layers, especially MLPs") and Ferchau
-    (uniform allocation sufficient; asymmetric no better).
-  * SigLIP + multimodal projector: FULL FT in every arm where they train at
-    all, never LoRA (Ferchau Finding 3: SigLIP LoRA => ATP 0.43, frozen =>
-    0.14, full-FT => 0.74).
-  * Per-arm mini-sweep: run --lr-scale in {0.5, 1.0, 2.0} on ONE task (coffee),
-    select by DUAL-NOISE SFT eval (iid + DSRL-style), freeze for the other
-    task. State exactly this in the paper.
+  arm0_expert_only  All of PaliGemma frozen -- language model, SigLIP and the projector;
+                    only the action expert, the time MLPs and the action projections
+                    train. Against arm1 this isolates the trainable set, against arm2 it
+                    isolates SigLIP.
+  arm1_full_ft      Everything trains, at openpi's default LR.
+  arm2_frozen_llm   Only PaliGemma's language model is frozen; SigLIP, the projector and
+                    the whole expert full-FT. Tests whether the pretrained language /
+                    semantic representation has to move for a new embodiment.
+  arm3_lora_r32     LoRA r=32 on VLM-LM + expert, SigLIP + projector full-FT
+                    (Ferchau-matched). Known to match full-FT at the SFT endpoint, so a
+                    downstream difference vs arm1 is hidden-property signal.
+  arm4_lora_vlm_full_expert   (stretch) LoRA'd VLM-LM, full-FT expert. Run only if
+                    arms 0-3 are on track.
 
-SCHEDULE / DURATION
-  steps == decay_steps == 20_000, warmup 1_000, cosine to peak/10.
-  Rationale: the checkpoint ladder needs a genuine "late" rung (~16-20k), and
-  every arm must see the same LR-trajectory *shape*. NOTE: this differs from
-  the old file (10k steps against a 30k decay horizon, ending mid-cosine). If
-  arm1 reuses pre-existing full-FT checkpoints instead of retraining, declare
-  the schedule mismatch in the paper or retrain arm1 under this schedule.
+LEARNING RATES (openpi defaults; LWR = "LoRA Without Regret", Schulman et al. 2025;
+Ferchau et al. arXiv:2607.10172)
+  * Full-FT parameters 2.5e-5 peak; LoRA parameters 10x that, 2.5e-4 (LWR).
+  * r=32 with alpha=32. alpha MUST be explicit: PEFT's LoraConfig defaults to 8, which
+    at r=32 would silently scale every adapter by 0.25.
+  * LoRA on ALL linears (attention + MLP) of the targeted components.
+  * SigLIP + projector full-FT wherever they train at all, never LoRA (Ferchau Finding
+    3: SigLIP frozen => ATP 0.14, LoRA => 0.43, full-FT => 0.74).
+  * Per-arm mini-sweep: --lr-scale {0.5, 1, 2}, selected by dual-noise SFT eval.
 
-FAIRNESS INVARIANTS (do not change per-arm)
-  batch_size=32 (LWR notes LoRA degrades at large batch; 32 is safe),
-  optimizer family + betas/eps/weight decay, schedule shape, data, augmentation,
-  chunk_size, save/eval cadence. The ONLY per-arm degrees of freedom are the
-  trainable-parameter set and the LR policy above.
+SCHEDULE  steps == decay_steps == 20_000, warmup 1_000, cosine to peak/10.
 
-REGULARIZATION (identical in every arm -- see COLOR_JITTER / STATE_DROPOUT_P)
-  * Colour jitter: brightness 0.3, contrast 0.4,
-    saturation 0.5, hue 0.08, applied to every training frame as ONE
-    torchvision ColorJitter.
-  * State dropout p=0.2, one draw per sample, and when it fires the WHOLE state
-    vector is zeroed (GR00T semantics). Raised from 0.1 as of the arm2 runs:
-    ~1 sample in 5 must now act on vision alone. NOTE this is a FAIRNESS
-    INVARIANT -- the completed arm1 runs (jobs 22285902/22285903) were trained
-    at 0.1, so they are NOT comparable to anything trained at 0.2 and must be
-    re-run before any arm1-vs-armN claim.
+FAIRNESS INVARIANTS (never vary per arm): batch_size 32, optimizer family and its
+betas / eps / weight decay, schedule shape, data, augmentation, chunk_size, save and
+eval cadence. The only per-arm degrees of freedom are the trainable set and the LR
+policy above.
 
-VERIFICATION NOTES (answers to the plumbing questions this file used to TODO)
-  1. Module paths were read off `policies/pi05/modeling_pi05.py`. The real
-     parameter tree is
-         model.paligemma_with_expert.paligemma.model.{language_model,
-             vision_tower, multi_modal_projector}...
-         model.paligemma_with_expert.gemma_expert.model.layers.<i>...
-         model.{action_in_proj, action_out_proj, time_mlp_in, time_mlp_out}
-     i.e. there is an extra `.model.` between `paligemma` and
-     `language_model`/`vision_tower`. PEFT matches `target_modules` with
-     `re.fullmatch` on module keys and `modules_to_save` with
-     `key.endswith(...)`, and `_set_trainable` only raises when *none* of the
-     `modules_to_save` entries match -- so a single wrong path is silent and
-     leaves SigLIP frozen (exactly Ferchau's worst config). `--dry-run`
-     asserts against that.
-  2. `PreTrainedPolicy.wrap_with_peft` sets `requires_grad=False` on every
-     parameter before calling `get_peft_model`, so `full_training_modules`
-     (PEFT `modules_to_save`) is the *only* way to keep SigLIP + projector +
-     action projections training. It is also the only way to get them written
-     into the checkpoint, because `save_checkpoint` calls
-     `PeftModel.save_pretrained`, which stores adapters + `modules_to_save`
-     and nothing else. Manually re-enabling `requires_grad` after wrapping
-     would train those weights and then silently drop them at save time.
-  3. Per-group LRs do follow the schedule proportionally:
-     `CosineDecayWithWarmupSchedulerConfig` builds a `LambdaLR`, which
-     multiplies each group's own `initial_lr` by the shared lambda. Its
-     `peak_lr`/`decay_lr` only enter as the ratio `alpha = decay_lr/peak_lr`,
-     so they are set from the arm's *largest* group and every group decays to
-     10% of its own base LR.
-  4. Optimizer hyperparameters are now taken from one place (`ADAM_*`,
-     `WEIGHT_DECAY`) and pushed into both the policy preset (arms 1-2) and
-     `NamedAdamWConfig` (arms 3-4), so the two paths cannot drift. Value is
-     the lerobot pi05 preset's `optimizer_weight_decay=0.01`, matching the
-     existing baseline runs, not openpi's ~0.
-  5. Dual-noise eval is NOT run in-loop: `lerobot_train` calls
-     `eval_policy_all` once per `eval_freq` and pi05's `select_action` has no
-     noise seam (only `predict_action_chunk(batch, noise=...)` does). Doing it
-     in-loop means patching `lerobot_train.py` and doubling an already
-     dominant eval cost. Run it post-hoc over the checkpoint ladder with
-     `examples/training/eval_pi05_dual_noise.py`, which is also cheaper
-     because you only score the rungs you care about.
-  6. Lamp constants filled in from the previously-run setup (commit 72dc9b12):
-     dataset `akuramshin/robocasa_lightbulbscrew_dex_filtered`, robot
-     `XArm6DexLeapRHOmron`, task string `ScrewLightbulb` -- confirmed against
-     `class ScrewLightbulb(Kitchen)` in robocasa
-     `environments/kitchen/single_stage/kitchen_lamp.py` on branch
-     `lightbulb_task` (note the lowercase "b"; "ScrewLightBulb" does not exist).
-  7. EMA: lerobot's training loop has no EMA of any kind (grep finds no
-     `ema_decay`/`EMAModel`). openpi's 0.99 default is simply not in play, so
-     all arms are non-EMA and there is nothing to match.
-  8. LAMP EVAL IS PINNED TO ONE KITCHEN. The downstream DSRL run for lightbulb
-     trains and evaluates on placements inside a single scene (construction
-     seed 1 = kitchen L4S8), so in-loop SFT eval mirrors that regime: both eval
-     sub-envs are seed 1 and differ only in where the lamp stands
-     (`LAMP_EVAL_PLACEMENT_IDS`, drawn from the feasibility-checked bank built by
-     `scripts/build_lamp_placement_bank.py --scene_seeds 1`). The placement is
-     re-applied on every reset by `PlacementBankWrapper`, so each sub-env is one
-     fixed start condition and the 20 eval episodes split 10/10 between them.
-     Consequence: in-loop lamp success is a seed-1 number, NOT a cross-kitchen
-     generalization number -- score other kitchens post-hoc with
-     `scripts/eval_sft_on_banks.py`. Coffee is unchanged (sub-env i = seed i).
+AUGMENTATION (invariant -- changing either invalidates every cross-arm comparison)
+  * One always-applied torchvision ColorJitter with GR00T N1.5's finetuning defaults:
+    brightness 0.3, contrast 0.4, saturation 0.5, hue 0.08.
+  * State dropout p=0.2: one Bernoulli draw per sample, and when it fires the WHOLE
+    normalized state vector is zeroed (GR00T semantics).
+  Both are training-only; eval observations come from the env and never pass through
+  them.
 
-MEASURED, on lerobot/pi05_base (4,143,404,816 params), H100, synthetic batch:
+TRAINABLE PARTITIONS (--dry-run asserts these exactly, as tensor counts)
+  arm0  gemma_expert 201, time_mlp 4, action_proj 4                          = 209
+  arm2  the above + vision_tower 437, multi_modal_projector 2                = 648
+  arm3  lora_ 508, vision_tower 437, multi_modal_projector 2, action_proj 4
+  arm4  lora_ 252, gemma_expert 201, time_mlp 4, vision_tower 437,
+        multi_modal_projector 2, action_proj 4
 
-                        trainable          resident   optimizer groups (peak LR)
-  arm0_expert_only  ~695M (~16.8%)            4.14B   one @ 2.5e-5    [derived]
-  arm1_full_ft      4.14B (100.0%)            4.14B   one @ 2.5e-5
-  arm2_frozen_llm   1.11B ( 26.8%)            4.14B   one @ 2.5e-5
-  arm3_lora_r32      468M ( 10.2%)            4.61B   vlm_lora 39.2M @ 2.5e-4
-                                                      expert_lora 14.0M @ 2.5e-4
-                                                      vision 414.8M @ 2.5e-5
-                                                      action_proj 0.07M @ 2.5e-5
-  arm4              1.15B ( 21.7%)            5.29B   vlm_lora 39.2M @ 2.5e-4
-                                                      expert 693M, vision 414.8M,
-                                                      action_proj @ 2.5e-5
+MEASURED on lerobot/pi05_base (4,143,404,816 params), H100, batch 32:
 
-  arm0's figure is DERIVED, not measured: arm2's 1.11B minus the vision tower's
-  414.8M, since arm0 is arm2 without the vision path. `--dry-run` prints the real
-  number and asserts the partition, so run it once before queueing the arm.
+                      trainable        resident   optimizer groups (peak LR)
+  arm0_expert_only     693M ( 16.7%)      4.14B   one @ 2.5e-5
+  arm1_full_ft        4.14B (100.0%)      4.14B   one @ 2.5e-5
+  arm2_frozen_llm     1.11B ( 26.8%)      4.14B   one @ 2.5e-5
+  arm3_lora_r32        468M ( 10.2%)      4.61B   vlm_lora 39.2M @ 2.5e-4
+                                                  expert_lora 14.0M @ 2.5e-4
+                                                  vision 414.8M @ 2.5e-5
+                                                  action_proj 0.07M @ 2.5e-5
+  arm4                1.15B ( 21.7%)      5.29B   vlm_lora 39.2M @ 2.5e-4
+                                                  expert 693M, vision 414.8M,
+                                                  action_proj @ 2.5e-5
 
-  Resident > 4.14B because PEFT's `modules_to_save` deep-copies each full-FT
-  island (a frozen `original_module` plus the trainable copy): +0.47B for arm3,
-  +1.15B for arm4. Budget GPU memory accordingly.
+  Resident exceeds 4.14B on the PEFT arms because `modules_to_save` deep-copies each
+  full-FT island (a frozen original plus the trainable copy): +0.47B for arm3, +1.15B
+  for arm4. Budget GPU memory accordingly.
 
-  NOTE on arm2's composition: "frozen LLM" sounds restrictive but is the second
-  LARGEST trainable set here -- 1.11B (vision 414.8M + expert 693M + time MLPs +
-  action projections), vs arm3's 468M. The frozen part is 3.04B of language model.
-  So arm2 is not "less adaptation than LoRA"; it is "all the adaptation, none of
-  it in the language model". Frame it that way.
+  Composition, worth describing precisely rather than by arm name: arm2's 1.11B is the
+  second LARGEST trainable set here, so it is "all of the adaptation, none of it in the
+  language model", not "less adaptation than LoRA". And 414.8M of arm3's 468M is the
+  vision tower (~89%), so arm3 is "LoRA'd language model + expert with vision full-FT
+  exactly as in arm1", not "LoRA vs full fine-tuning".
 
-  NOTE on arm3's composition: 414.8M of its 468M trainable parameters are the
-  vision tower, i.e. ~89%. Arm3 is not "constrained updates" in aggregate -- it
-  is "LoRA'd language model + expert, with vision full-FT exactly as in arm1".
-  That is Ferchau's design and the intended contrast, but say it that way in the
-  paper rather than "LoRA vs full fine-tuning".
+DATA (read from dataset metadata)
 
-DATA, measured from dataset metadata:
+            fps   episodes   frames   state   action   epochs @ 20k x bs32
+  coffee     20         56    7,928    (23,)    (22,)   ~81
+  lamp       30         33   31,842    (22,)    (22,)   ~20
 
-              fps   episodes   frames   state   action   epochs @ 20k x bs32
-  coffee       20         56    7,928    (23,)    (22,)   ~81
-  lamp         30         33   31,842    (22,)    (22,)   ~20
+  * The two tasks were collected at DIFFERENT control rates, so `fps` comes from
+    metadata and is never hardcoded. With chunk_size 32 / n_action_steps 16 fixed
+    across tasks, a chunk spans 1.60 s on coffee but 1.07 s on lamp, and an executed
+    segment 0.80 s vs 0.53 s -- so a DSRL noise vector steers a different span of time
+    per task. Within a task every arm sees the same horizon, so the arm comparison is
+    unaffected; cross-task transfer of a selected LR is the claim this weakens.
+  * The state dims confirm the robot assignment: 23 = Panda(7) + LEAP(16) for coffee,
+    22 = XArm6(6) + LEAP(16) for lamp.
+  * ~81 epochs over 56 coffee demonstrations at 4.14B parameters will memorise. How
+    fast each arm overfits is part of the measurement, which is what makes the
+    checkpoint ladder and the LR sweep load-bearing rather than cosmetic.
 
-  * THE TWO TASKS WERE COLLECTED AT DIFFERENT CONTROL RATES (20 vs 30 Hz).
-    Hardcoding `fps=30` for both -- which is what the old single-task script
-    does, because it was last edited for lamp -- would run coffee eval at 1.5x
-    its collection rate. `fps` is therefore read from dataset metadata.
-  * CONSEQUENCE OF THE RATE DIFFERENCE (confirmed intentional by the recording
-    setup, not a data bug): with chunk_size=32 / n_action_steps=16 fixed across
-    tasks, a chunk spans 1.60s on coffee but 1.07s on lamp, and an executed
-    segment 0.80s vs 0.53s. Within a task every arm sees the same horizon, so
-    the arm comparison is unaffected -- but the same hyperparameters mean
-    different things across tasks, and a DSRL noise vector steers a different
-    span of time per task. Either say so, or equalise the horizon in seconds
-    (e.g. chunk_size 32 @ 20Hz vs 48 @ 30Hz) if cross-task transfer of the
-    selected LR is meant to be a real claim.
-  * The state dims independently confirm the robot assignment: 23 = Panda(7) +
-    LEAP(16) for coffee, 22 = XArm6(6) + LEAP(16) for lamp, matching
-    `RoboCasaEnv._robot_dims`. This is why features are read from metadata
-    rather than hardcoded to the padded 32.
-  * WATCH THE EPOCH COUNT. 20k steps at batch 32 is ~81 epochs over coffee's
-    7.9k frames. A 4.14B model at 81 epochs on 56 demonstrations will memorise;
-    expect the arms to differ substantially in HOW FAST they overfit, which is
-    arguably the interesting measurement but makes the checkpoint ladder and the
-    LR sweep load-bearing rather than cosmetic. Also note lamp is 33 episodes,
-    not the "~50 per task" in the project description.
-
-EXACT TRAINABLE PARTITIONS (asserted by --dry-run, tensor counts):
-  arm0_expert_only gemma_expert 201, time_mlp 4, action_proj 4  (= 209, nothing
-                   else) -- arm2's 648 minus vision_tower 437 and
-                   multi_modal_projector 2. It additionally asserts that nothing
-                   under `paligemma` trains at all.
-  arm2_frozen_llm  vision_tower 437, multi_modal_projector 2, gemma_expert 201,
-                   time_mlp 4, action_proj 4  (= 648, nothing else)
-  arm3_lora_r32    lora_ 508, vision_tower 437, multi_modal_projector 2,
-                   action_proj 4
-  arm4             lora_ 252, gemma_expert 201, time_mlp 4, vision_tower 437,
-                   multi_modal_projector 2, action_proj 4
-  arm2 additionally asserts that nothing under `paligemma.model.language_model`
-  or `paligemma.lm_head` has requires_grad, and a backward pass confirms the
-  language model receives no gradient at all while SigLIP, the expert and the
-  action projections all do.
-
-DEAD WEIGHTS (verified by forward+backward, identical in every arm -- NOT a bug
-and NOT a between-arm confound):
-  `paligemma.lm_head`, `gemma_expert.lm_head`, and layer 17 (the last of 18) of
-  the VLM language model's `o_proj`, `gate_proj`, `up_proj`, `down_proj` +
-  post-attention layernorm never receive a gradient; layer 17's `q_proj` receives
-  exactly zero. pi05's suffix attends to the prefix's per-layer K/V, so the final
-  prefix layer's own output is never read, and pi05 never generates tokens. In
-  arm3/arm4 this shows up as 8 LoRA parameters (4 modules x A,B at layer 17) with
-  `grad=None` -- expected, and the same modules are dead under full-FT in arm1.
-  Separately, EVERY `lora_A` has exactly zero gradient on the first backward
-  because `lora_B` is zero-initialised; that is standard LoRA, not a failure.
+Before queueing an arm, run --dry-run: PEFT matches `modules_to_save` with
+`key.endswith(...)` and raises only when NO entry matches, so one wrong module path is
+silent and leaves SigLIP frozen. That and the other codebase gotchas (parameter tree,
+per-group LR semantics, dead weights) are in SFT_ARMS_RUNBOOK.md.
 """
 
 import argparse
@@ -357,27 +209,20 @@ WEIGHT_DECAY = 0.01                # preset value; openpi's ~0 (1e-10) is NOT us
 GRAD_CLIP_NORM = 1.0
 
 # ----------------------------------------------------------------------------
-# Regularization (a FAIRNESS INVARIANT -- identical in every arm, or the arm
-# comparison is confounded by how much augmentation each arm saw).
+# Augmentation (a FAIRNESS INVARIANT -- identical in every arm).
 #
-# Colour jitter: GR00T N1.5's finetuning defaults. torchvision's ColorJitter
-# reads a float `b` as "sample the factor uniformly from [max(0,1-b), 1+b]",
-# so these give brightness [0.7,1.3], contrast [0.6,1.4], saturation [0.5,1.5]
-# and hue [-0.08,0.08]. NOTE this is deliberately NOT lerobot's default
-# ImageTransformsConfig, which samples a SUBSET of {brightness, contrast,
-# saturation, hue, sharpness, affine} per frame as independent transforms. One
-# ColorJitter with all four parameters -- always applied, jointly, in random
-# internal order -- is what GR00T does and is the intended semantics here.
-# Applied dataset-side, i.e. to training frames only; eval observations come
-# from the env and never pass through this.
+# GR00T N1.5's finetuning defaults. torchvision reads a float `b` as "sample the
+# factor uniformly from [max(0,1-b), 1+b]", so these give brightness [0.7,1.3],
+# contrast [0.6,1.4], saturation [0.5,1.5], hue [-0.08,0.08]. This is deliberately
+# NOT lerobot's default ImageTransformsConfig, which samples a SUBSET of
+# {brightness, contrast, saturation, hue, sharpness, affine} per frame as
+# independent transforms; GR00T applies all four jointly, every frame.
 COLOR_JITTER = {"brightness": 0.3, "contrast": 0.4, "saturation": 0.5, "hue": 0.08}
 
 # State dropout, GR00T N1.5 semantics: with this probability a training sample has its
-# WHOLE normalized state replaced by zeros (one draw per sample, all-or-nothing -- not
-# per-dimension noise). So at p=0.1 roughly one sample in ten must act on vision alone.
-# Guards against the policy leaning on proprioception instead of vision, which matters
-# here because ~81 epochs over 56 demonstrations is ample opportunity to memorise joint
-# trajectories. Training only; see StateDropoutProcessorStep.
+# WHOLE normalized state replaced by zeros -- one draw per sample, all-or-nothing, not
+# per-dimension noise -- so at p=0.2 one sample in five must act on vision alone. Stops
+# the policy leaning on proprioception instead of vision. See StateDropoutProcessorStep.
 STATE_DROPOUT_P = 0.2
 
 
@@ -424,21 +269,16 @@ TIME_MLP_MODULES = ["model.time_mlp_in", "model.time_mlp_out"]
 EXPERT_MODULES = ["paligemma_with_expert.gemma_expert"]
 
 # ----------------------------------------------------------------------------
-# Tasks.
-# Single dex dataset per task: the old dex+gripper mixture is a co-training
-# axis that is OUT OF SCOPE for this matrix (it would confound the arm
-# comparison). Keep it for a separate ablation if ever needed.
+# Tasks. One dex dataset each -- the dex+gripper co-training mixture is a separate
+# axis and is out of scope for this matrix.
 #
-# NOTE ON `controller`: eval control mode MUST match the trained action
-# representation. Both datasets are relabelled to absolute joint targets, so
-# eval runs the robot's *_joint_pos composite controller. Leaving
-# RoboCasaEnv.controller at None silently falls back to OSC_POSE and every
-# rollout is garbage while training loss looks fine.
+# `controller`: the eval control mode MUST match the action representation the
+# dataset stores (see TaskSpec.controller_filename). A mismatch is silent -- training
+# loss looks fine and every rollout fails.
 #
-# NOTE ON `robocasa_task`: "ScrewLightbulb" (lowercase "b") matches
-# `class ScrewLightbulb(Kitchen)` in robocasa's kitchen_lamp.py. That env only
-# exists on the `lightbulb_task` branch of the robocasa checkout, so the lamp
-# arms require it; `add_leap` does not define it.
+# `robocasa_task`: "ScrewLightbulb" (lowercase "b") only exists on the
+# `lightbulb_task` branch of the robocasa checkout, which the lamp arms therefore
+# require; `add_leap` does not define it.
 # ----------------------------------------------------------------------------
 WRIST_IMAGE_KEY = "observation.images.robot0_eye_in_hand"
 EXTERNAL_IMAGE_KEY = "observation.images.robot0_agentview_left"
@@ -471,9 +311,8 @@ class TaskSpec:
     dataset: str
     robot: str
     robocasa_task: str
-    # Composite-controller config for EVAL. This is a property of how the DATASET was
-    # collected, not of the robot, so it must be stated per task -- deriving it from the
-    # robot is exactly the bug that produced 0% success on every coffee checkpoint.
+    # Composite-controller config for EVAL. A property of how the DATASET was collected,
+    # not of the robot, so it is stated per task rather than derived from the robot.
     # None = robosuite's default for the robot (OSC_POSE, delta end-effector).
     controller_filename: str | None = None
     # Arm dims the eval controller consumes: the arm's joint count for an absolute
@@ -500,11 +339,10 @@ TASKS: dict[str, TaskSpec] = {
         dataset="akuramshin/robocasa_coffeepressbutton_dex_augstyle",
         robot="PandaDexLeapRHOmron",
         robocasa_task="CoffeePressButton",
-        # OSC_POSE deltas: the dataset's 22-dim action is 6 end-effector dims + 16 hand.
-        # A Panda under absolute JOINT_POSITION would need 7 arm dims, so this data is
-        # NOT joint targets -- unlike the lamp data. controller=None gives robosuite's
-        # default for this robot, which is default_pandadexleaprhomron.json (OSC_POSE,
-        # input_type=delta), matching how the original coffee run was configured.
+        # OSC_POSE deltas: the 22-dim action is 6 end-effector dims + 16 hand. A Panda
+        # under absolute JOINT_POSITION would need 7 arm dims, so this data is NOT joint
+        # targets, unlike lamp. None selects default_pandadexleaprhomron.json (OSC_POSE,
+        # input_type=delta).
         controller_filename=None,
         arm_action_dim=6,
     ),
@@ -517,8 +355,10 @@ TASKS: dict[str, TaskSpec] = {
         # way, so eval MUST use the joint-position controller rather than the OSC default.
         controller_filename="default_xarm6dexleaprhomron_joint_pos.json",
         arm_action_dim=6,
-        # Both eval sub-envs are construction seed 1 (kitchen L4S8), differing only in where the
-        # lamp stands -- the regime the downstream DSRL run trains and evaluates in.
+        # Both eval sub-envs are construction seed 1 (kitchen L4S8), differing only in where
+        # the lamp stands -- the regime the downstream DSRL run trains and evaluates in. So
+        # lamp in-loop success is a seed-1 number, NOT a cross-kitchen generalization number;
+        # score other kitchens post-hoc with scripts/eval_sft_on_banks.py.
         eval_scene_seeds=(1, 1),
         eval_placement_bank=LAMP_PLACEMENT_BANK,
         eval_placement_ids=LAMP_EVAL_PLACEMENT_IDS,
@@ -559,16 +399,12 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
     "arm0_expert_only": ExperimentSpec(
         name="arm0_expert_only",
         # train_expert_only freezes ALL of PaliGemma (LM + SigLIP + projector), so
-        # freeze_vision_encoder is redundant here -- see PI05Pytorch._set_requires_grad,
-        # where the train_expert_only branch is taken and the freeze_llm branch is not.
-        # It is set anyway to mirror the 2026-08-31 run's config field-for-field, so a
-        # diff of the two train_config.json files shows only the intended differences.
+        # freeze_vision_encoder is redundant -- see PI05Pytorch._set_requires_grad, where
+        # the train_expert_only branch is taken and freeze_llm is skipped. Set anyway so a
+        # diff against the 2026-08-31 run's train_config.json shows only real differences.
         freeze_vision_encoder=True,
         train_expert_only=True,
         peft=None,
-        # Matrix LR, NOT the old run's 5e-5: arm0 exists to isolate the trainable set
-        # against arm1, which only works if every other knob is identical. --lr-scale 2
-        # reaches the old peak (but not its flat shape; DECAY_FRACTION still applies).
         peak_lr=FULL_FT_PEAK_LR,
         policy_optimizer_lr=FULL_FT_PEAK_LR,
         expect_trainable=(
@@ -577,8 +413,7 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
             "action_in_proj",
             "action_out_proj",
         ),
-        # The whole point of the arm: nothing in the VLM moves. "paligemma." also
-        # covers the vision tower and the projector, which arm2 leaves trainable.
+        # Nothing in the VLM moves, including the vision path that arm2 leaves trainable.
         expect_frozen=(
             "paligemma.model.language_model",
             "paligemma.model.vision_tower",
@@ -591,14 +426,11 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
             r"action_(in|out)_proj",
         ),
         notes=(
-            "Frozen VLM, expert-only -- the trainable set of the 2026-08-31 lamp "
-            "run (6.0% at 20k, the only non-zero lamp number measured so far) but "
-            "under this file's invariants. arm1 minus arm0 is the trainable set; "
-            "arm2 minus arm0 is SigLIP. Cheapest arm to train and the smallest "
-            "trainable set, so it also bounds the overfitting hypothesis: arm1's "
-            "final train loss is LOWER than the old run's (0.0093 vs 0.0263) while "
-            "its rollout success is 0, which is what 4.14B params over 33 demos "
-            "and ~20 epochs would look like if it were memorising."
+            "Frozen VLM, expert-only. arm1 minus arm0 is the trainable set; arm2 minus "
+            "arm0 is SigLIP. Smallest trainable set (693M) and cheapest arm to train, so "
+            "it also bounds the overfitting hypothesis. Runs at the matrix LR, not the "
+            "5e-5 the historical expert-only lamp run used; --lr-scale 2 reaches that "
+            "peak, though not its flat shape (DECAY_FRACTION still applies)."
         ),
     ),
     # ------------------------------------------------------------------ arm 1
@@ -619,10 +451,8 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
             "time_mlp_in",
         ),
         notes=(
-            "Everything trainable at openpi-default LR (2.5e-5 peak). "
-            "Uses the policy training preset. If reusing pre-existing full-FT "
-            "checkpoints, declare the schedule mismatch (see header). "
-            "LR sweep center; sweep via --lr-scale {0.5,1,2}."
+            "Everything trainable at the openpi-default LR (2.5e-5 peak), via the policy "
+            "training preset. Centre of the LR sweep: --lr-scale {0.5,1,2}."
         ),
     ),
     # ------------------------------------------------------------------ arm 2
@@ -643,8 +473,7 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
             "time_mlp_in",
         ),
         expect_frozen=("paligemma.model.language_model", "paligemma.lm_head"),
-        # The exact partition requested for this arm: nothing outside these five
-        # components may train.
+        # Nothing outside these five components may train.
         expect_trainable_only=(
             r"vision_tower",
             r"multi_modal_projector",
@@ -653,14 +482,11 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
             r"action_(in|out)_proj",
         ),
         notes=(
-            "Freezes ONLY PaliGemma's language model; the vision tower, the "
-            "multimodal projector and the whole action expert full-FT at the "
-            "openpi default LR. Isolates 'keep the pretrained language/semantic "
-            "representation fixed' from 'keep the whole VLM fixed' -- the latter "
-            "also freezes SigLIP, which Ferchau Finding 3 says is the single "
-            "most damaging choice (ATP 0.14 frozen vs 0.74 full-FT), so the old "
-            "train_expert_only arm confounded the two. Needs PI05Config.freeze_llm, "
-            "added for this study; --dry-run asserts the exact trainable set."
+            "Freezes ONLY PaliGemma's language model; the vision tower, the multimodal "
+            "projector and the whole action expert full-FT at the openpi default LR. "
+            "Isolates 'keep the pretrained language/semantic representation fixed' from "
+            "'keep the whole VLM fixed' (arm0), which also freezes SigLIP. Needs "
+            "PI05Config.freeze_llm, added for this study."
         ),
     ),
     # ------------------------------------------------------------------ arm 3
@@ -678,11 +504,9 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
             full_training_modules=VISION_FULL_FT_MODULES + ACTION_PROJ_MODULES,
         ),
         lr_groups={
-            # All LoRA params at 10x full-FT LR (LWR). Uniform rank + uniform
-            # LR across VLM-LM and expert (Ferchau: asymmetric no better).
-            # Patterns are re.search'd against post-PEFT parameter names, which
-            # carry a `base_model.model.` prefix and a `.lora_A.default.weight`
-            # suffix.
+            # All LoRA params at 10x the full-FT LR (LWR), uniform across VLM-LM and
+            # expert. Patterns are re.search'd against post-PEFT parameter names, which
+            # carry a `base_model.model.` prefix and a `.lora_A.default.weight` suffix.
             "vlm_lora": NamedParamGroupConfig(
                 patterns=[r"paligemma\.model\.language_model.*lora_"],
                 lr=LORA_PEAK_LR,
@@ -718,13 +542,12 @@ EXPERIMENTS: dict[str, ExperimentSpec] = {
             r"action_(in|out)_proj",
         ),
         notes=(
-            "H2 arm, Ferchau-matched: LoRA r=32/alpha=32 uniform on VLM-LM + "
-            "expert (all linears incl. MLPs), SigLIP + projector full-FT, "
-            "action projections full-FT. Known to MATCH full-FT at the SFT "
-            "endpoint => downstream differences vs arm1 are hidden-property "
-            "signal. LoRA LR = 2.5e-4 (10x rule; the LWR correction Ferchau "
-            "did not apply). Sweep LoRA groups {1.25e-4, 2.5e-4, 5e-4} via "
-            "--lr-scale; full-FT islands scale with it, acceptable."
+            "Ferchau-matched: LoRA r=32/alpha=32 uniform on VLM-LM + expert (all linears "
+            "incl. MLPs), SigLIP + projector + action projections full-FT. Matches "
+            "full-FT at the SFT endpoint, so downstream differences vs arm1 are "
+            "hidden-property signal. LoRA LR 2.5e-4 (the 10x LWR rule). --lr-scale "
+            "sweeps the LoRA groups over {1.25e-4, 2.5e-4, 5e-4} and scales the full-FT "
+            "islands with them."
         ),
     ),
     # ---------------------------------------------------------- arm 4 (stretch)
@@ -836,9 +659,8 @@ def make_config(
     state_dim = metadata.features["observation.state"]["shape"][0]
 
     # The eval controller is only correct if it consumes exactly the action vector the
-    # dataset stores. Training never notices a mismatch (it only reads dataset actions), so
-    # a wrong controller shows up solely as every rollout failing -- which is what happened
-    # when the controller was derived from the robot instead of from the dataset.
+    # dataset stores. Training never notices a mismatch -- it only reads dataset actions --
+    # so a wrong controller shows up solely as every rollout failing.
     expected_action_dim = task_spec.arm_action_dim + LEAP_HAND_DIMS
     if expected_action_dim != action_dim:
         raise ValueError(
@@ -893,12 +715,11 @@ def make_config(
             push_to_hub=False,
             dtype="bfloat16",
             gradient_checkpointing=True,
-            # MEASURED: compile_model=True uses PI05Config.compile_mode="max-autotune",
-            # whose CUDA-graph private pools take ~40 GiB ON TOP of the ~45 GiB this run
-            # actually needs -- which OOMs an 80 GiB H100 at batch_size=32. It only
-            # survived earlier smoke tests because those used batch_size=2. Off: 1.68 s
-            # per step, 45.0 GiB peak. Revisit with compile_mode="default" (no cudagraphs)
-            # if the ~9.3 h of pure training per 20k-step run becomes the bottleneck.
+            # MEASURED: compile_model=True uses compile_mode="max-autotune", whose
+            # CUDA-graph private pools take ~40 GiB on top of the ~45 GiB this run needs,
+            # which OOMs an 80 GiB H100 at batch_size=32. Off: 1.68 s/step, 45.0 GiB peak
+            # (~9.3 h per 20k-step run). compile_mode="default" avoids the cudagraphs and
+            # is the thing to try if step time becomes the bottleneck.
             compile_model=False,
             freeze_vision_encoder=spec.freeze_vision_encoder,
             train_expert_only=spec.train_expert_only,

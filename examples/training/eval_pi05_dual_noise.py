@@ -4,29 +4,26 @@
 # Licensed under the Apache License, Version 2.0.
 
 """
-Dual-noise SFT eval over a checkpoint ladder: the checkpoint-selection metric for
-the pi05 SFT-arm matrix (see train_pi05_casa_experiments.py).
+Dual-noise SFT eval over a checkpoint ladder: the checkpoint-selection metric for the
+pi05 SFT-arm matrix (see train_pi05_casa_experiments.py).
 
 Every checkpoint is scored twice in the same RoboCasa suite:
 
-  iid          pi05's own flow-matching prior -- one fresh N(0,1) sample per
-               chunk step, shape (B, chunk_size, max_action_dim). This is what
-               `sample_actions` does when `noise=None` and what the in-loop
-               training eval measures.
+  iid          pi05's own flow-matching prior -- one fresh N(0,1) sample per chunk
+               step, shape (B, chunk_size, max_action_dim). This is what
+               `sample_actions` does when `noise=None`, and what the in-loop training
+               eval measures.
 
-  duplicated   ONE N(0,1) vector per chunk, repeated across all chunk steps.
-               This is the action distribution DSRL actually steers: the noise
-               actor emits `noise_chunk_size` (default 1) vectors which
-               `dsrl_pi05_robocasa_example.py` pads out by repeating. A policy
-               that is only good under iid noise has a degenerate steering
-               surface, and its DSRL numbers will not reflect its SFT numbers.
+  duplicated   ONE N(0,1) vector per chunk, repeated across all chunk steps. This is
+               the action distribution DSRL actually steers: the noise actor emits
+               `noise_chunk_size` (default 1) vectors, which
+               dsrl_pi05_robocasa_example.py pads out by repeating. A policy that is
+               only good under iid noise has a degenerate steering surface, so its
+               DSRL numbers will not follow its SFT numbers.
 
-Why not in the training loop: `lerobot_train` calls `eval_policy_all` once per
-`eval_freq`, and pi05's `select_action` has no noise seam (only
-`predict_action_chunk(batch, noise=...)` does), so in-loop dual-noise needs a
-patch to shared training code AND doubles an eval cost that already dominates
-these runs. Post-hoc you score only the rungs you care about, in parallel, on
-whatever GPU is free.
+Post-hoc rather than in-loop: pi05's `select_action` has no noise seam (only
+`predict_action_chunk(batch, noise=...)` does), and scoring just the rungs you care
+about is cheaper than doubling an eval that already dominates these runs.
 
 Usage (inside an allocation):
     python examples/training/eval_pi05_dual_noise.py \
