@@ -11,8 +11,8 @@
 # Optional extra args are forwarded to the training script, e.g.
 #   sbatch ... sft_arms.sbatch arm3_lora_r32 coffee --lr-scale 2.0 --seed 7
 #
-#SBATCH --account=def-gberseth
-#SBATCH --gres=gpu:h100:1
+#SBATCH --account=def-kdarvish
+#SBATCH --gpus=h100:1
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=48000M
 # MEASURED budget for a 20k-step arm1 run (H100, batch 32, compile off), taken from the
@@ -40,10 +40,6 @@ cd "$REPO"
 module load StdEnv/2023 python/3.12.4
 source .venv/bin/activate
 
-# Headless GPU rendering for the RoboCasa eval rollouts. Without this, env creation can
-# fall back to a software path or fail outright on a compute node with no display.
-export MUJOCO_GL=egl
-export PYOPENGL_PLATFORM=egl
 export PYTHONUNBUFFERED=1
 
 # Where the pi05 weights, the PaliGemma tokenizer and the datasets are cached. Must be on
@@ -69,6 +65,35 @@ mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$NUMBA_CACHE_DIR" "$TRITON_CACHE_DIR"
 echo "=== preflight ($(date)) ==="
 echo "job=${SLURM_JOB_ID:-none} node=$(hostname) arm=$ARM task=$TASK"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+
+
+NEEDS_GL=1
+case " $* " in
+    *" --eval-freq 0 "*|*" --eval-freq=0 "*) NEEDS_GL=0 ;;
+esac
+[ "$NEEDS_GL" = "0" ] && echo "eval disabled (--eval-freq 0): no renderer required"
+
+if [ -n "${SFT_MUJOCO_GL:-}" ]; then
+    export MUJOCO_GL="$SFT_MUJOCO_GL"
+    export PYOPENGL_PLATFORM="$SFT_MUJOCO_GL"
+    echo "GL backend forced by SFT_MUJOCO_GL=$SFT_MUJOCO_GL"
+else
+    echo "probing headless GL backends (CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset})"
+    if GL_EXPORTS=$(python scripts/check_gl_backend.py --emit-exports 2>/dev/null) && [ -n "$GL_EXPORTS" ]; then
+        eval "$GL_EXPORTS"
+        echo "GL backend: MUJOCO_GL=$MUJOCO_GL MUJOCO_EGL_DEVICE_ID=${MUJOCO_EGL_DEVICE_ID:-n/a}"
+    elif [ "$NEEDS_GL" = "0" ]; then
+        echo "no working headless GL backend -- fine, this run has eval disabled."
+    else
+        echo "PREFLIGHT FAILED: no working headless GL backend on this node."
+        echo "  Run 'python scripts/check_gl_backend.py' here for the per-device detail."
+        echo "  On a MIG-partitioned cluster, check you got a FULL GPU (fir: --gpus=h100:1);"
+        echo "  MIG cannot do OpenGL/EGL at all."
+        echo "  To train here anyway WITHOUT rendering, pass --eval-freq 0 and score the"
+        echo "  checkpoints on a cluster where EGL works."
+        exit 1
+    fi
+fi
 
 python - <<'PREFLIGHT'
 import os, sys, shutil
