@@ -146,6 +146,16 @@ def available_steps(run_dir: Path) -> list[int]:
     return sorted(int(d.name) for d in checkpoints.iterdir() if d.is_dir() and d.name.isdigit())
 
 
+def close_envs(envs) -> None:
+    """Best-effort close; a vec env whose workers already died raises on close."""
+    for group in envs.values():
+        for vec in group.values():
+            try:
+                vec.close()
+            except Exception as exc:  # noqa: BLE001 -- teardown must not mask the real error
+                logging.warning("Ignoring error while closing eval env: %s", exc)
+
+
 def build_env_cfg(task_spec, reference_checkpoint: Path) -> RoboCasaEnv:
     return RoboCasaEnv(
         task=task_spec.robocasa_task,
@@ -319,16 +329,32 @@ def main() -> None:
     for step in steps:
         pretrained_dir = checkpoint_dir(args.run_dir, step)
         videos_dir = None if args.no_videos else args.run_dir / "eval_dual_noise" / f"step_{step:07d}"
-        results[str(step)] = evaluate_step(
-            pretrained_dir=pretrained_dir,
-            task_spec=task_spec,
-            env_cfg=env_cfg,
-            envs=envs,
-            n_episodes=args.n_episodes,
-            seed=args.seed,
-            videos_dir=videos_dir,
-            n_videos=0 if args.no_videos else args.n_videos,
-        )
+        try:
+            results[str(step)] = evaluate_step(
+                pretrained_dir=pretrained_dir,
+                task_spec=task_spec,
+                env_cfg=env_cfg,
+                envs=envs,
+                n_episodes=args.n_episodes,
+                seed=args.seed,
+                videos_dir=videos_dir,
+                n_videos=0 if args.no_videos else args.n_videos,
+            )
+        except (EOFError, BrokenPipeError, ConnectionError) as exc:
+            # An async RoboCasa worker died; its vec env is unusable from here on.
+            logging.warning("Env workers died on step %d (%s); rebuilding and retrying once.", step, exc)
+            close_envs(envs)
+            envs = make_env(env_cfg, n_envs=args.batch_size, use_async_envs=args.batch_size > 1)
+            results[str(step)] = evaluate_step(
+                pretrained_dir=pretrained_dir,
+                task_spec=task_spec,
+                env_cfg=env_cfg,
+                envs=envs,
+                n_episodes=args.n_episodes,
+                seed=args.seed,
+                videos_dir=videos_dir,
+                n_videos=0 if args.no_videos else args.n_videos,
+            )
         out_path.write_text(json.dumps(results, indent=2, sort_keys=True))
         logging.info("Wrote %s", out_path)
 
@@ -338,11 +364,9 @@ def main() -> None:
             # The headline number for checkpoint selection: how much success is lost when the
             # chunk is driven by ONE noise vector, which is what DSRL actually steers.
             payload["gap/pc_success"] = row["iid"]["pc_success"] - row["duplicated"]["pc_success"]
-            run.log(payload, step=step)
+            run.log(payload, step=step, commit=True)
 
-    for group in envs.values():
-        for vec in group.values():
-            vec.close()
+    close_envs(envs)
 
     if run is not None:
         run.finish()
