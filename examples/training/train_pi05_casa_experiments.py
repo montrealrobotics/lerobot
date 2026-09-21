@@ -112,6 +112,7 @@ import dataclasses
 import datetime as dt
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -186,7 +187,7 @@ TOTAL_STEPS = 20_000
 WARMUP_STEPS = 1_000
 DECAY_STEPS = TOTAL_STEPS          # cosine completes; same trajectory shape everywhere
 SAVE_FREQ = 2_000                  # dense checkpoint ladder for the selection study
-EVAL_FREQ = 2_000
+EVAL_FREQ = 5_000
 DEFAULT_EVAL_BATCH_SIZE = 2        # eval sub-envs when a task pins no explicit start conditions
 BATCH_SIZE = 32
 
@@ -928,6 +929,51 @@ def apply_smoke_test_overrides(cfg: TrainPipelineConfig) -> TrainPipelineConfig:
     return cfg
 
 
+def apply_resume(cfg: TrainPipelineConfig, run_dir: Path) -> TrainPipelineConfig:
+    """Continue an interrupted run from its newest checkpoint, in place.
+
+    lerobot resumes by reading `--config_path` off sys.argv inside
+    `TrainPipelineConfig.validate()`, then pointing `policy.pretrained_path` at that
+    checkpoint and `checkpoint_path` at its parent. Building the config in Python
+    bypasses the CLI, so three things have to be fixed up by hand:
+
+    * PEFT arms would be wrapped TWICE. `make_policy` already returns a PeftModel when
+      `policy.use_peft` is set (it loads the trained adapter), and `lerobot_train` then
+      calls `wrap_with_peft` again whenever `cfg.peft` is not None -- which freezes every
+      loaded parameter and trains a fresh, randomly initialised adapter on top. So clear
+      `cfg.peft` and set `use_peft` instead.
+    * `validate()` installs the optimizer/scheduler presets only when NOT resuming, so a
+      preset arm would reach `make_optimizer_and_scheduler` with `optimizer=None`.
+    * `output_dir` must be the original run directory, so the ladder continues rather
+      than starting a second one.
+    """
+    run_dir = Path(run_dir)
+    checkpoint = run_dir / "checkpoints" / "last"
+    pretrained = checkpoint / "pretrained_model"
+    train_config = pretrained / "train_config.json"
+    if not train_config.exists():
+        raise FileNotFoundError(f"No train_config.json at {train_config}; cannot resume {run_dir}.")
+    if not (checkpoint / "training_state").is_dir():
+        raise FileNotFoundError(
+            f"{checkpoint} has no training_state/ -- the optimizer state was pruned, so this "
+            "rung cannot be resumed from. Only the newest checkpoint keeps it."
+        )
+
+    sys.argv.append(f"--config_path={train_config}")
+    cfg.resume = True
+    cfg.output_dir = run_dir
+
+    if (pretrained / "adapter_config.json").exists():
+        cfg.policy.use_peft = True
+        cfg.peft = None
+
+    if cfg.use_policy_training_preset:
+        cfg.optimizer = cfg.policy.get_optimizer_preset()
+        cfg.scheduler = cfg.policy.get_scheduler_preset()
+
+    return cfg
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--experiment", choices=tuple(EXPERIMENTS), default="arm1_full_ft")
@@ -976,6 +1022,13 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Build policy + optimizer and assert this arm's trainable set, then exit.",
+    )
+    parser.add_argument(
+        "--resume-from",
+        type=Path,
+        default=None,
+        help="Run directory of an interrupted run; continues from checkpoints/last. The "
+        "arm and task must match the original run.",
     )
     parser.add_argument(
         "--smoke-test",
@@ -1027,6 +1080,8 @@ if __name__ == "__main__":
     )
     if args.smoke_test:
         cfg = apply_smoke_test_overrides(cfg)
+    if args.resume_from:
+        cfg = apply_resume(cfg, args.resume_from)
     if args.dry_run:
         run_dry_run(cfg, EXPERIMENTS[args.experiment])
     else:

@@ -534,7 +534,15 @@ def make_policy(
             )
 
         policy = policy_cls.from_pretrained(**kwargs)
-        policy = PeftModel.from_pretrained(policy, peft_pretrained_path, config=peft_config)
+        # is_trainable=True is REQUIRED, and PEFT defaults it to False: loading an adapter
+        # for inference sets inference_mode and freezes every parameter, so resuming a PEFT
+        # training run would reach the optimizer with zero trainable parameters
+        # ("optimizer got an empty parameter list"). This also makes the loaded-adapter path
+        # consistent with `wrap_with_peft`, which yields a trainable model. Harmless for
+        # evaluation, which runs under `policy.eval()` and `torch.no_grad()`.
+        policy = PeftModel.from_pretrained(
+            policy, peft_pretrained_path, config=peft_config, is_trainable=True
+        )
 
     else:
         # Make a fresh policy.
