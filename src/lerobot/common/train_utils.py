@@ -104,9 +104,15 @@ def save_checkpoint(
     pretrained_dir = checkpoint_dir / PRETRAINED_MODEL_DIR
     policy.save_pretrained(pretrained_dir)
     cfg.save_pretrained(pretrained_dir)
-    if cfg.peft is not None:
+    if cfg.peft is not None or getattr(policy.config, "use_peft", False):
         # When using PEFT, policy.save_pretrained will only write the adapter weights + config, not the
         # policy config which we need for loading the model. In this case we'll write it ourselves.
+        #
+        # `cfg.peft` alone is not enough: it is the instruction to BUILD an adapter, and resuming a
+        # PEFT run clears it so `wrap_with_peft` does not stack a second adapter on the one just
+        # loaded from the checkpoint. The policy is still PEFT-wrapped, which is what
+        # `policy.config.use_peft` records -- so gating only on `cfg.peft` silently stops writing
+        # config.json after a resume and leaves those checkpoints unloadable.
         policy.config.save_pretrained(pretrained_dir)
     if preprocessor is not None:
         preprocessor.save_pretrained(pretrained_dir)
