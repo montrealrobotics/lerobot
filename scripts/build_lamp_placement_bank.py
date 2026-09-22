@@ -232,6 +232,8 @@ def yaw_deg(quat_wxyz) -> float:
 
 def pick_spaced(pool, anchors, n, min_sep):
     """Greedy pick of n entries whose xy is at least min_sep from anchors and each other."""
+    if n <= 0:
+        return []
     chosen = []
     for cand in pool:
         xy = np.asarray(cand["pos"][:2])
@@ -257,6 +259,13 @@ def main() -> None:
     parser.add_argument("--n_candidates", type=int, default=60, help="Sampler draws evaluated per scene")
     parser.add_argument("--train_min_sep_m", type=float, default=0.04)
     parser.add_argument("--heldout_min_sep_m", type=float, default=0.06)
+    parser.add_argument(
+        "--max_offset_m",
+        type=float,
+        default=None,
+        help="Keep only candidates within this xy distance of the scene's reference placement. "
+        "Yield inside a small box is low; raise --n_candidates to compensate.",
+    )
     parser.add_argument("--bank_seed", type=int, default=20260912)
     parser.add_argument("--out", required=True, help="Output bank JSON")
     parser.add_argument("--render_dir", default=None, help="Render bank entries here (needs EGL)")
@@ -299,6 +308,21 @@ def main() -> None:
             else:
                 accepted.append(entry)
             print(f"  cand {k:02d}: {reasons if reasons else 'PASS'}  {_summary(rest)}")
+
+        if args.max_offset_m is not None:
+            near, far = [], []
+            for c in accepted:
+                offset = float(np.linalg.norm(np.asarray(c["pos"][:2]) - ref_pos[:2]))
+                c["offset_from_reference_m"] = offset
+                (near if offset <= args.max_offset_m else far).append(c)
+            for c in far:
+                c["reasons"] = [f"outside_box:{c['offset_from_reference_m']:.3f}m"]
+                rejected.append(c)
+            print(
+                f"  box filter: {len(near)}/{len(accepted)} candidates within "
+                f"{args.max_offset_m:.3f} m of the reference placement"
+            )
+            accepted = near
 
         train = pick_spaced(accepted, [ref_pos.tolist()], args.n_train, args.train_min_sep_m)
         train_ids = {c["k"] for c in train}
@@ -365,6 +389,7 @@ def main() -> None:
         "how_to_apply": "env._env.object_placements['lamp'] = (pos, quat_wxyz, obj); env.reset()",
         "checks": CHECKS,
         "spacing_m": {"train": args.train_min_sep_m, "heldout": args.heldout_min_sep_m},
+        "max_offset_m": args.max_offset_m,
         "scenes": scenes_out,
     }
     out = Path(os.path.expanduser(args.out))

@@ -154,3 +154,53 @@ python scripts/eval_lamp_protocol_ab.py --protocol legacy --n_episodes 50 \
 
 `eval_pi05_dual_noise.py` and `eval_sft_on_banks.py` both need the run's own
 `train_config.json`, so point them at the run directory, not at a copied checkpoint.
+
+## DSRL
+
+Design: [SFT_ARMS_DSRL.md](SFT_ARMS_DSRL.md).
+
+### 1. Build the tight lamp placement bank (once)
+
+```bash
+BANK=~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_tight
+python scripts/build_lamp_placement_bank.py \
+    --scene_seeds 1 --max_offset_m 0.06 \
+    --n_train 10 --n_heldout 2 \
+    --train_min_sep_m 0.015 --heldout_min_sep_m 0.025 \
+    --n_candidates 400 \
+    --out $BANK/bank.json --render_dir $BANK/renders
+```
+
+Yield inside the box is low, hence 400 candidates. The builder warns `!! bank is short` if it
+cannot fill the quota. Check the renders before use.
+
+### 2. Select the checkpoint
+
+```bash
+python examples/training/eval_pi05_dual_noise.py --run-dir <run> --task lamp \
+    --steps 8000 12000 16000 20000 --n-episodes 50
+python scripts/select_sft_checkpoint.py --run-dir <run>
+```
+
+Writes `<run>/selected_checkpoint.json`.
+
+### 3. Launch DSRL — 3 seeds per frozen checkpoint
+
+```bash
+CKPT=<run>/checkpoints/<selected_step>/pretrained_model
+for S in 0 1 2; do
+  sbatch --job-name=dsrl_arm0_lamp_s$S dsrl_mila.sbatch lamp $CKPT $S
+done
+```
+
+`dsrl_mila.sbatch <lamp|coffee> <policy_path> <seed> [extra args]` holds the per-task
+invariants (robot, fps, controller, bank, eval sets, `--collect_scene_seeds`) so they cannot
+drift between seeds or arms; anything after the seed is forwarded to the training script.
+Override the GPU with `sbatch --gres=gpu:rtx8000:1 dsrl_mila.sbatch ...`.
+
+### 4. Supporting jobs
+
+```bash
+sbatch dsrl_profile.sbatch             # macro-step time split + VRAM/RSS vs --collect_envs
+sbatch lamp_offset_calibration.sbatch  # frozen-SFT success vs lamp offset, sets --max_offset_m
+```

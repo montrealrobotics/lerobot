@@ -7,13 +7,8 @@
 # Extra args pass through to eval_pi05_dual_noise.py, e.g. --steps 16000 20000,
 # --n-episodes 50, --no-wandb.
 #SBATCH --account=def-kdarvish
-# Full H100, not a MIG slice: MIG cannot do OpenGL/EGL at all, and these jobs are
-# ALL rendering. See the same note in sft_arms.sbatch.
 #SBATCH --gpus=h100:1
 #SBATCH --cpus-per-task=8
-# 48G, not 32G: the first attempt at 32G had the lamp job's async env workers die mid
-# rollout (job 22392550, EOFError from a dead worker pipe at MaxRSS 22.3G). The lamp
-# TRAINING jobs ran the same 2 async RoboCasa envs at 48G without trouble.
 #SBATCH --mem=48000M
 #SBATCH --time=04:00:00
 #SBATCH --output=/home/akur/scratch/lerobot/slurm_logs/%x-%j.out
@@ -44,10 +39,6 @@ echo "job=${SLURM_JOB_ID:-none} node=$(hostname) task=$TASK"
 echo "run_dir=$RUN_DIR"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 
-# Unlike training, this job is nothing BUT rendering, so a missing GL backend is
-# always fatal here -- no advisory path. Probe rather than assume: robosuite indexes
-# eglQueryDevicesEXT() with CUDA_VISIBLE_DEVICES and the working index differs per
-# cluster. Override with SFT_MUJOCO_GL=egl|osmesa.
 if [ -n "${SFT_MUJOCO_GL:-}" ]; then
     export MUJOCO_GL="$SFT_MUJOCO_GL"
     export PYOPENGL_PLATFORM="$SFT_MUJOCO_GL"
@@ -89,8 +80,7 @@ except Exception:
 if not os.environ.get("WANDB_API_KEY") and not has_netrc:
     fail.append("no wandb credentials (set WANDB_API_KEY, run `wandb login`, or pass --no-wandb)")
 
-# The run must exist, be readable, and carry the ladder we are about to score. Checking
-# here means a bad path fails in seconds rather than after the queue wait.
+# The run must exist, be readable, and carry the ladder we are about to score.
 ckpts = run_dir / "checkpoints"
 if not ckpts.is_dir():
     fail.append(f"no checkpoints/ under {run_dir}")
@@ -105,8 +95,7 @@ else:
             fail.append(f"checkpoint {step} has no weights in {pm}")
             break
 
-    # The run's OWN recorded task/robot must match the --task we were given, or we would
-    # score a lamp policy in a coffee kitchen and report it as a number.
+    # The run's OWN recorded task/robot must match the --task we were given.
     tc = ckpts / f"{steps[-1]:06d}" / "pretrained_model" / "train_config.json"
     if tc.exists():
         env = json.loads(tc.read_text()).get("env")

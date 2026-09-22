@@ -93,8 +93,11 @@ def _make_collect_env(
     seed: int = 0,
     kitchen_bank: dict | None = None,
     start_rejection: dict | None = None,
+    scene_seeds: list[int] | None = None,
 ):
-    """Collection vec env: sub-env ``i`` is construction seed ``i``, i.e. one fixed kitchen.
+    """Collection vec env: sub-env ``i`` is one fixed kitchen, by construction seed.
+
+    ``scene_seeds`` names that seed per sub-env; ``None`` means ``scene_seeds[i] == i``.
 
     Without a bank this is exactly ``make_env``. A placement bank moves the task object to that
     kitchen's next training placement on every reset; a kitchen bank makes each sub-env a pool of
@@ -104,6 +107,9 @@ def _make_collect_env(
     """
     if num_envs < 1:
         raise ValueError("--collect_envs must be >= 1")
+    scene_seeds = list(range(num_envs)) if scene_seeds is None else list(scene_seeds)
+    if len(scene_seeds) != num_envs:
+        raise ValueError(f"scene_seeds has {len(scene_seeds)} entries but --collect_envs is {num_envs}")
 
     def raw(s: int):
         return _wrap_start_rejection(_make_single_robocasa_env(env_cfg, seed=s), start_rejection)
@@ -121,20 +127,20 @@ def _make_collect_env(
 
         return gym.vector.SyncVectorEnv([pool_factory(i) for i in range(num_envs)])
     if placement_bank is None:
-        if start_rejection is None:
+        if start_rejection is None and scene_seeds == list(range(num_envs)):
             envs = make_env(env_cfg, n_envs=num_envs, use_async_envs=False)
             return envs[env_cfg.type][0]
-        return gym.vector.SyncVectorEnv([lambda i=i: raw(i) for i in range(num_envs)])
+        return gym.vector.SyncVectorEnv([lambda s=s: raw(s) for s in scene_seeds])
 
     from lerobot.envs.robocasa_placement_bank import PlacementBankWrapper, scene_entries
 
-    def factory(i: int):
+    def factory(i: int, scene_seed: int):
         def _make():
-            entries = scene_entries(placement_bank, i, "train")
+            entries = scene_entries(placement_bank, scene_seed, "train")
             return PlacementBankWrapper(
-                raw(i),
+                raw(scene_seed),
                 placement_bank,
-                i,
+                scene_seed,
                 entries,
                 shuffle=True,
                 seed=seed + i,
@@ -143,7 +149,7 @@ def _make_collect_env(
         return _make
 
     # Same vector-env class make_env uses for a synchronous RoboCasa env.
-    return gym.vector.SyncVectorEnv([factory(i) for i in range(num_envs)])
+    return gym.vector.SyncVectorEnv([factory(i, s) for i, s in enumerate(scene_seeds)])
 
 
 def _wrap_start_rejection(env: gym.Env, start_rejection: dict | None) -> gym.Env:
@@ -957,6 +963,13 @@ def main():
         "UTD per transition — scale --utd_ratio or --total_steps up to compensate.",
     )
     parser.add_argument(
+        "--collect_scene_seeds",
+        type=str,
+        default=None,
+        help="Comma-separated construction seed per collection sub-env. Default: sub-env i = "
+        "seed i. The lamp bank holds only seed 1, so lamp runs pass --collect_scene_seeds 1.",
+    )
+    parser.add_argument(
         "--noise_chunk_size",
         type=int,
         default=1,
@@ -1128,6 +1141,17 @@ def main():
     if args.dsrl_num_layers < 1:
         raise ValueError("--dsrl_num_layers must be >= 1")
 
+    collect_scene_seeds = (
+        [int(x) for x in args.collect_scene_seeds.split(",") if x.strip()]
+        if args.collect_scene_seeds
+        else list(range(args.collect_envs))
+    )
+    if len(collect_scene_seeds) != args.collect_envs:
+        raise ValueError(
+            f"--collect_scene_seeds has {len(collect_scene_seeds)} entries but --collect_envs is "
+            f"{args.collect_envs}; give one construction seed per collection sub-env."
+        )
+
     device = torch.device(args.device)
 
     # ── Load frozen VLA (pi05 / SmolVLA, auto-detected) + its processors ──
@@ -1183,9 +1207,13 @@ def main():
                 f"Placement bank is for {placement_bank['task']}/{placement_bank['robot']}, "
                 f"not {args.task}/{args.robot}"
             )
-        missing = [s for s in range(args.collect_envs) if s not in placement_bank["_scenes_by_seed"]]
+        missing = [s for s in collect_scene_seeds if s not in placement_bank["_scenes_by_seed"]]
         if missing:
-            raise ValueError(f"--collect_envs {args.collect_envs} needs bank scenes for seeds {missing}")
+            raise ValueError(
+                f"Placement bank has no scenes for construction seeds {missing}; it holds "
+                f"{sorted(placement_bank['_scenes_by_seed'])}. Set --collect_scene_seeds to seeds "
+                "the bank covers."
+            )
     kitchen_bank = None
     if args.kitchen_bank:
         import json
@@ -1216,11 +1244,12 @@ def main():
             # for a resident pool of every training kitchen just to close it again.
             kitchen_bank=None if args.eval_only else kitchen_bank,
             start_rejection=None if args.eval_only else start_rejection,
+            scene_seeds=collect_scene_seeds,
         )
     )
 
     eval_seeds = tuple(int(s) for s in args.eval_seeds.split(",") if s.strip() != "")
-    train_seeds = list(range(args.collect_envs))
+    train_seeds = collect_scene_seeds
     if kitchen_bank is not None:
         pass  # pools are printed by _make_collect_env
     elif placement_bank is not None:

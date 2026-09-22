@@ -38,7 +38,7 @@ Two RoboCasa tasks, deliberately different in controller and control rate:
 | 4. Held-out scoring | `scripts/eval_sft_on_banks.py` | SFT-only baseline on the DSRL eval cells |
 
 Stage 2 exists because the in-loop SFT eval samples i.i.d. noise, which is *not* the
-distribution DSRL steers. See the checkpoint-selection note below.
+distribution DSRL steers; see Checkpoint selection.
 
 Launchers: `sft_arms.sbatch` (Alliance) and `sft_arms_mila.sbatch` (Mila), both
 `sbatch <launcher> <arm> <task> [extra args]`.
@@ -124,13 +124,18 @@ Units gotcha: `min_buffer_size` counts **macro** transitions (one per chunk) whi
 Start conditions come from feasibility-checked **banks**, so "held out" means a start the
 DSRL agent never trained on, in the same kitchen.
 
-**ScrewLightbulb — placement bank**
-`~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1/bank.json`
-One kitchen, construction seed 1 = layout 4 / style 8. Within it: 10 training lamp
-placements (`s1_train_00..09`), 2 held-out (`s1_heldout_00/01`), plus `s1_reference`, the
-scene's own native placement, which every pre-bank lightbulb run trained on.
-`PlacementBankWrapper` re-applies a placement on every reset, so each cell is one fixed
-start condition varying only by RoboCasa's 0.02 rad arm reset noise.
+**ScrewLightbulb — placement bank, tightened**
+`~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_tight/bank.json`
+One kitchen (construction seed 1 = layout 4 / style 8), one collection env. 10 training
+placements (`s1_train_00..09`) and 2 held out (`s1_heldout_00/01`), all within a 6 cm box
+centred on `s1_reference`, the scene's native placement. The reference stays out of the
+training pool. `PlacementBankWrapper` re-applies a placement every reset, so a cell varies only
+by RoboCasa's 0.02 rad arm reset noise.
+
+Measured 2026-09-20, 25 episodes per cell: the expert-only checkpoint scores 4% at the
+reference and 0% at `s1_train_04`, 11.8 cm out. The first seed-1 bank spread its entries
+9.4–27.4 cm, which is why the box was added. The 6 cm radius is bracketed by those two points,
+not calibrated — `lamp_offset_calibration.sbatch` measures success against offset.
 
 **CoffeePressButton — kitchen bank**
 `~/scratch/lerobot/placement_banks/coffeepressbutton_pandadex_kitchens/bank.json`
@@ -146,43 +151,118 @@ effector starts within tolerance of the noise-free pose, so held-out numbers ref
 novelty rather than jammed starts. Not applied to lamp: the lamp kitchens' starts are
 already consistent across the runs being compared.
 
-### SFT-side eval, and why it mirrors this
+### What gets reported
 
-Lamp in-loop SFT eval is pinned to the same regime: both sub-envs are kitchen seed 1 and
-differ only in lamp placement (`s1_reference`, `s1_train_04`). So **lamp in-loop success is
-a seed-1 number, not a cross-kitchen generalization number** — score other kitchens
-post-hoc with `scripts/eval_sft_on_banks.py`. Coffee keeps the default, sub-env *i* =
-construction seed *i*.
+`--eval_placement_sets train,heldout,reference` scores all 13 cells in one pass;
+`make_robocasa_eval_fn` aggregates them as `success_rate_train` / `_heldout` / `_reference`.
+`--eval_episodes 3`: cells are the effective sample size, and eval builds a fresh env per cell
+on every pass.
+
+`episode/success_rate_ma10` from the collection rollouts is a free training-placement signal,
+but on-policy rather than deterministic.
+
+### SFT-side eval
+
+Lamp in-loop SFT eval is pinned to the same regime: both sub-envs are kitchen seed 1, differing
+only in lamp placement (`s1_reference`, `s1_train_04`). It is a seed-1 number, not a
+cross-kitchen one; score other kitchens post-hoc with `scripts/eval_sft_on_banks.py`. Coffee
+keeps sub-env *i* = construction seed *i*.
+
+`s1_train_04` is from the old wide bank (11.8 cm, 0% measured). Repoint the in-loop eval at a
+tight-bank placement once it exists.
 
 ### Checkpoint selection
 
-By **dual-noise** eval (`eval_pi05_dual_noise.py`), not by in-loop success. Each rung is
-scored twice: under i.i.d. noise (a fresh N(0,1) per chunk step, what SFT eval measures) and
-under duplicated noise (one vector repeated across the chunk, what DSRL actually steers).
-These rank checkpoints differently, and the duplicated-noise number is the one that
-predicts DSRL.
+Score every rung with `eval_pi05_dual_noise.py`: i.i.d. noise (fresh N(0,1) per chunk step,
+what SFT eval measures) and duplicated noise (one vector repeated across the chunk, what DSRL
+steers). The duplicated number is the selection metric.
+
+`scripts/select_sft_checkpoint.py` turns the ladder into one choice:
+
+1. Score = duplicated-noise success.
+2. Smooth over 3 adjacent rungs. A 20-episode rung has ~±9pp standard error, so argmax over a
+   10-rung ladder mostly selects eval noise.
+3. Among rungs within one standard error of the best smoothed score, take the **earliest** —
+   fewest epochs, least memorization.
+
+arm0 lamp in-loop was 20 / 0 / 20 / 5 % at 5k / 10k / 15k / 20k, i.e. the rungs are not
+separable at n=20. Prefer fewer rungs at `--n-episodes 50` over ten rungs at 20; distinguishing
+15% from 25% needs ~150 episodes and is not going to happen, so the rule picks a *region* of
+the ladder rather than a provably best rung. Say that in the paper.
+
+## DSRL run matrix
+
+3 RL seeds per frozen checkpoint (one checkpoint per arm/task, selected by dual-noise eval).
+Only `--seed` varies: SAC init, exploration noise, buffer order, bank shuffle.
+
+### Differences from the pre-arm-matrix runs
+
+Verified against `dsrl_pi05_robocasa_example.py` and the historical run configs, 2026-09-21.
+Everything else matches `DSRLConfig` defaults.
+
+| | historical | this study |
+|---|---|---|
+| `--collect_envs` | 2 | 1 (lamp) |
+| `--utd_ratio` | 40 | 20 |
+| `--collect_scene_seeds` | n/a | 1 (lamp) |
+| lamp placements | 20 over 2 kitchens, 9–27 cm | 10 in one kitchen, ≤6 cm |
+
+Gradient steps per transition is `utd_ratio / collect_envs`: 40/2 = 20 before, 20/1 = 20 now,
+so effective UTD is unchanged.
+
+`--collect_scene_seeds` was added for this study; without it a single-env run can only train in
+construction seed 0, and the lamp bank holds only seed 1.
+
+## Throughput
+
+Measured on an L40S, lamp, arm1 20k checkpoint (`scripts/profile_dsrl_throughput.py`, job
+10882072). Seconds per macro step:
+
+| envs | env | frozen pi05 | obs prep | SAC | steps/s | h per 500k | VRAM | RSS |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 0.464 | 0.208 | 0.027 | 0.434 | 14.1 | 9.9 | 8.8G | 18.1G |
+| 2 | 0.882 | 0.231 | 0.037 | 0.425 | 20.3 | 6.8 | 9.0G | 21.3G |
+| 4 | 1.976 | 0.310 | 0.060 | 0.443 | 22.9 | 6.1 | 9.2G | 21.6G |
+| 8 | 3.963 | 0.474 | 0.096 | 0.439 | 25.7 | 5.4 | 9.6G | 24.1G |
+
+At `collect_envs=1` the split is env 41% / SAC 38% / pi05 18% / prep 2%. Env time scales
+linearly (~0.49 s per sub-env), SAC is flat, pi05 amortizes (0.208 → 0.059 s per env).
+
+**Not VRAM-, RAM- or GPU-compute-bound**: 9.6 GiB of 46, 24 GiB of 48, 4% average GPU
+utilization. The limit is CPU-side mujoco + EGL rendering, then the SAC update loop.
+
+**Parallel collection envs are not the lever.** The apparent 14.1 → 25.7 steps/s gain comes
+from holding `utd_ratio` fixed, which divides gradient steps per transition by the env count.
+Scaling `utd_ratio` with `collect_envs` to hold effective UTD constant gives 14.1 / 15.9 / 15.7
+/ 16.0 steps/s for 1 / 2 / 4 / 8 — a flat ~13% whatever the env count. Run the 3 seeds as
+concurrent jobs instead.
+
+Obs prep is 2% of wall-clock, so the 15/16 redundant `_prepare` calls in
+`DSRLEnvWrapper.step` are not worth fixing.
+
+## Limitations
+
+- **No LR sweep.** Every arm uses its default peak LR (2.5e-5 full-FT / 2.5e-4 LoRA), so arms
+  are compared at one point in LR space. An arm could lose because its default LR suits it
+  worse rather than because its parameter partition is worse.
+- Lamp DSRL is a single-kitchen, ≤6 cm result. `scripts/eval_sft_on_banks.py` is the
+  cross-kitchen instrument.
+- No held-out imitation loss; SFT overfitting is inferred from train loss across runs.
+- chunk_size 32 / n_action_steps 16 spans 1.60 s on coffee and 1.07 s on lamp.
 
 ## Status
 
-- SFT arm matrix: arm0 added and dry-run verified (693,422,112 trainable; 201/4/4 tensors).
-  arm1 lamp and coffee runs exist. arms 2–4 not yet run under the current invariants.
-- **Lamp SFT is at the floor.** Measured 2026-09-20 over 50 episodes per protocol
-  (`scripts/eval_lamp_protocol_ab.py`): the historical expert-only checkpoint scores 6.0%
-  and the arm1 full-FT checkpoint 0/100 across every cell. This is a blocking issue — DSRL
-  on top of a 0–6% policy has almost nothing to steer, so no arm-vs-arm claim on lamp is
-  meaningful until lamp SFT is materially better. Coffee is not affected.
-- Earlier DSRL results (pre-arm-matrix, on older checkpoints) are in the project notes, not
-  here. The load-bearing one: lamp DSRL randomized over 2 kitchens × 20 placements never
-  learned at a 500k budget, which is why the lamp bank here is narrowed to a single kitchen.
+- arm0 dry-run verified (693,422,112 trainable). arm0 and arm1 lamp runs exist; arms 2–4 not
+  yet run under the current invariants.
+- **Lamp SFT was at the floor for arm1**: 0/100 across every cell, vs 6.0% for the historical
+  expert-only checkpoint (2026-09-20, `scripts/eval_lamp_protocol_ab.py`, 50 episodes per
+  protocol). **arm0 recovers it**: 20% / 0% / 20% in-loop at steps 5k / 10k / 15k, which points
+  at the trainable set rather than the LR or the augmentation.
+- The historical lamp DSRL failure (2 kitchens × 20 placements, no learning at 500k) is most
+  plausibly the placement spread, not the RL.
 
-## Open — decide before running the DSRL half
+## Open
 
-1. **Lamp DSRL training pool**: all 10 seed-1 training placements, or a subset? The 20-pose
-   version did not learn.
-2. **Seeds per arm.** At the success rates lamp currently shows, one RL seed per arm cannot
-   distinguish arms. Coffee may be fine with one.
-3. **LR sweep transfer.** The plan selects `--lr-scale` on coffee and freezes it for lamp,
-   but the tasks differ 4× in epochs and 1.5× in control rate. Sweeping lamp separately is
-   the safer claim.
-4. **No validation split.** Nothing in the pipeline measures held-out *imitation* loss, so
-   "overfitting" is currently inferred from train loss across runs.
+1. Calibrate the box — `lamp_offset_calibration.sbatch`, arm0 step 15000, offsets 0–12 cm.
+2. Confirm `--eval_freq` cost against the throughput profile.
+3. Coffee may need fewer than 3 RL seeds; unmeasured.
