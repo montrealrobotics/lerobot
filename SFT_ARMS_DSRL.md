@@ -175,7 +175,7 @@ tight-bank placement once it exists.
 
 Score every rung with `eval_pi05_dual_noise.py`: i.i.d. noise (fresh N(0,1) per chunk step,
 what SFT eval measures) and duplicated noise (one vector repeated across the chunk, what DSRL
-steers). The duplicated number is the selection metric.
+steers).
 
 `scripts/select_sft_checkpoint.py` turns the ladder into one choice:
 
@@ -184,11 +184,6 @@ steers). The duplicated number is the selection metric.
    10-rung ladder mostly selects eval noise.
 3. Among rungs within one standard error of the best smoothed score, take the **earliest** —
    fewest epochs, least memorization.
-
-arm0 lamp in-loop was 20 / 0 / 20 / 5 % at 5k / 10k / 15k / 20k, i.e. the rungs are not
-separable at n=20. Prefer fewer rungs at `--n-episodes 50` over ten rungs at 20; distinguishing
-15% from 25% needs ~150 episodes and is not going to happen, so the rule picks a *region* of
-the ladder rather than a provably best rung. Say that in the paper.
 
 ## DSRL run matrix
 
@@ -215,27 +210,14 @@ construction seed 0, and the lamp bank holds only seed 1.
 
 ## Throughput
 
-Measured on an L40S, lamp, arm1 20k checkpoint (`scripts/profile_dsrl_throughput.py`, job
-10882072). Seconds per macro step:
+Measured, lamp, arm1 20k checkpoint (`scripts/profile_dsrl_throughput.py`, jobs 10882072 /
+10886462). Seconds per macro step at `collect_envs=1`:
 
-| envs | env | frozen pi05 | obs prep | SAC | steps/s | h per 500k | VRAM | RSS |
-|---|---|---|---|---|---|---|---|---|
-| 1 | 0.464 | 0.208 | 0.027 | 0.434 | 14.1 | 9.9 | 8.8G | 18.1G |
-| 2 | 0.882 | 0.231 | 0.037 | 0.425 | 20.3 | 6.8 | 9.0G | 21.3G |
-| 4 | 1.976 | 0.310 | 0.060 | 0.443 | 22.9 | 6.1 | 9.2G | 21.6G |
-| 8 | 3.963 | 0.474 | 0.096 | 0.439 | 25.7 | 5.4 | 9.6G | 24.1G |
-
-At `collect_envs=1` the split is env 41% / SAC 38% / pi05 18% / prep 2%. Env time scales
-linearly (~0.49 s per sub-env), SAC is flat, pi05 amortizes (0.208 → 0.059 s per env).
-
-**Not VRAM-, RAM- or GPU-compute-bound**: 9.6 GiB of 46, 24 GiB of 48, 4% average GPU
-utilization. The limit is CPU-side mujoco + EGL rendering, then the SAC update loop.
-
-**Parallel collection envs are not the lever.** The apparent 14.1 → 25.7 steps/s gain comes
-from holding `utd_ratio` fixed, which divides gradient steps per transition by the env count.
-Scaling `utd_ratio` with `collect_envs` to hold effective UTD constant gives 14.1 / 15.9 / 15.7
-/ 16.0 steps/s for 1 / 2 / 4 / 8 — a flat ~13% whatever the env count. Run the 3 seeds as
-concurrent jobs instead.
+**Parallel collection envs are not the lever.** The apparent 14.1 → 25.7 steps/s gain from
+1 → 8 envs comes from holding `utd_ratio` fixed, which divides gradient steps per transition by
+the env count. Scaling `utd_ratio` with `collect_envs` to hold effective UTD constant gives
+14.1 / 15.9 / 15.7 / 16.0 steps/s — a flat ~13% whatever the env count. Run seeds as concurrent
+jobs instead, at 4 CPUs each so the per-user CPU quota allows more of them.
 
 Obs prep is 2% of wall-clock, so the 15/16 redundant `_prepare` calls in
 `DSRLEnvWrapper.step` are not worth fixing.
@@ -252,17 +234,10 @@ Obs prep is 2% of wall-clock, so the 15/16 redundant `_prepare` calls in
 
 ## Status
 
-- arm0 dry-run verified (693,422,112 trainable). arm0 and arm1 lamp runs exist; arms 2–4 not
-  yet run under the current invariants.
-- **Lamp SFT was at the floor for arm1**: 0/100 across every cell, vs 6.0% for the historical
-  expert-only checkpoint (2026-09-20, `scripts/eval_lamp_protocol_ab.py`, 50 episodes per
-  protocol). **arm0 recovers it**: 20% / 0% / 20% in-loop at steps 5k / 10k / 15k, which points
-  at the trainable set rather than the LR or the augmentation.
 - The historical lamp DSRL failure (2 kitchens × 20 placements, no learning at 500k) is most
   plausibly the placement spread, not the RL.
 
 ## Open
 
 1. Calibrate the box — `lamp_offset_calibration.sbatch`, arm0 step 15000, offsets 0–12 cm.
-2. Confirm `--eval_freq` cost against the throughput profile.
-3. Coffee may need fewer than 3 RL seeds; unmeasured.
+2. Coffee may need fewer than 3 RL seeds; unmeasured.
