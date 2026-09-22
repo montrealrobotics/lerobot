@@ -186,6 +186,79 @@ class ReplayBuffer:
 
         self.initialized = True
 
+    def state_dict(self) -> dict:
+        """Buffer contents as CPU tensors, oldest transition first.
+
+        Only the ``size`` filled entries are returned, so a part-full buffer costs its real
+        size rather than its capacity. Order is normalized because a full ring has its oldest
+        entry at ``position``; restoring into a fresh buffer at indices ``0..size-1`` then keeps
+        the eviction order correct.
+        """
+        if not self.initialized:
+            return {"initialized": False}
+
+        def chrono(tensor: torch.Tensor) -> torch.Tensor:
+            if self.size == self.capacity:
+                tensor = torch.roll(tensor, -self.position, dims=0)
+            return tensor[: self.size].cpu().clone()
+
+        out = {
+            "initialized": True,
+            "size": self.size,
+            "capacity": self.capacity,
+            "optimize_memory": self.optimize_memory,
+            "states": {k: chrono(v) for k, v in self.states.items()},
+            "actions": chrono(self.actions),
+            "rewards": chrono(self.rewards),
+            "dones": chrono(self.dones),
+            "truncateds": chrono(self.truncateds),
+            "has_complementary_info": self.has_complementary_info,
+        }
+        if not self.optimize_memory:
+            out["next_states"] = {k: chrono(v) for k, v in self.next_states.items()}
+        if self.has_complementary_info:
+            out["complementary_info"] = {k: chrono(v) for k, v in self.complementary_info.items()}
+        return out
+
+    def load_state_dict(self, state: dict) -> None:
+        """Restore contents saved by :meth:`state_dict` into this buffer."""
+        if not state.get("initialized", False):
+            return
+        if state["capacity"] != self.capacity or state["optimize_memory"] != self.optimize_memory:
+            raise ValueError(
+                f"Buffer was saved with capacity={state['capacity']} "
+                f"optimize_memory={state['optimize_memory']}, but this one has "
+                f"capacity={self.capacity} optimize_memory={self.optimize_memory}."
+            )
+
+        size = int(state["size"])
+        if not self.initialized:
+            sample_state = {k: v[0] for k, v in state["states"].items()}
+            sample_info = (
+                {k: v[0] for k, v in state["complementary_info"].items()}
+                if state.get("has_complementary_info")
+                else None
+            )
+            self._initialize_storage(
+                state=sample_state, action=state["actions"][0], complementary_info=sample_info
+            )
+
+        for key, value in state["states"].items():
+            self.states[key][:size].copy_(value)
+        if not self.optimize_memory:
+            for key, value in state["next_states"].items():
+                self.next_states[key][:size].copy_(value)
+        self.actions[:size].copy_(state["actions"])
+        self.rewards[:size].copy_(state["rewards"])
+        self.dones[:size].copy_(state["dones"])
+        self.truncateds[:size].copy_(state["truncateds"])
+        if state.get("has_complementary_info"):
+            for key, value in state["complementary_info"].items():
+                self.complementary_info[key][:size].copy_(value)
+
+        self.size = size
+        self.position = size % self.capacity
+
     def __len__(self):
         return self.size
 

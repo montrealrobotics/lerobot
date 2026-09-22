@@ -1,25 +1,15 @@
 # pi05 SFT arms → DSRL steering
 
-Working notes for the study. Scope: how a pretrained VLA should be adapted to a new
-embodiment when the endpoint is steering RL, not the SFT checkpoint itself.
-
-How to run any of this — launchers, cluster setup, preflight, disk budget, codebase
-gotchas — is in [SFT_ARMS_RUNBOOK.md](SFT_ARMS_RUNBOOK.md).
+Working notes. How to run any of it: [SFT_ARMS_RUNBOOK.md](SFT_ARMS_RUNBOOK.md).
 
 ## The question
 
-Stage 1 adapts `lerobot/pi05_base` to a dexterous embodiment (LEAP hand on a Franka or
-UFactory arm) from a few dozen demonstrations. Stage 2 freezes that checkpoint and trains
-DSRL — a small SAC policy that steers the frozen policy's flow-matching **noise input**
-rather than its actions — on top of it.
+Stage 1 adapts `lerobot/pi05_base` to a dexterous embodiment (LEAP hand on a Franka or UFactory
+arm) from a few dozen demonstrations. Stage 2 freezes that checkpoint and trains DSRL — a small
+SAC policy steering the frozen policy's flow-matching **noise input** rather than its actions.
 
-The claim under test: **SFT recipes that look equivalent at the SFT endpoint can differ
-downstream.** A checkpoint's success rate under its own i.i.d. noise prior says little
-about how well its noise space can be steered, how stable RL on top of it is, or how it
-generalizes to start conditions it never saw. So the arms are compared at the DSRL
-endpoint, not only at the SFT one.
-
-Two RoboCasa tasks, deliberately different in controller and control rate:
+Claim under test: SFT recipes that look equivalent at the SFT endpoint can differ downstream, so
+the arms are compared at the DSRL endpoint, not only at the SFT one.
 
 | task | robot | action representation | fps | demos | frames |
 |---|---|---|---|---|---|
@@ -45,9 +35,8 @@ Launchers: `sft_arms.sbatch` (Alliance) and `sft_arms_mila.sbatch` (Mila), both
 
 ## SFT arms
 
-Every arm uses the stock pi05 architecture (no category-specific action projections) and
-differs only in which parameters train and at what LR. Partitions are asserted by
-`--dry-run` before any arm is queued.
+Stock pi05 architecture in every arm; they differ only in which parameters train and at what LR.
+`--dry-run` asserts the partition before an arm is queued.
 
 | arm | trains | frozen | trainable | peak LR |
 |---|---|---|---|---|
@@ -57,13 +46,7 @@ differs only in which parameters train and at what LR. Partitions are asserted b
 | `arm3_lora_r32` | LoRA r=32 on VLM-LM + expert; SigLIP, projector, action projections full-FT | base weights of LM + expert | 468M (10.2%) | 2.5e-4 LoRA / 2.5e-5 full-FT |
 | `arm4_lora_vlm_full_expert` *(stretch)* | LoRA r=32 on VLM-LM; expert, SigLIP, projector, action projections full-FT | base weights of the LM | 1.15B (21.7%) | 2.5e-4 LoRA / 2.5e-5 full-FT |
 
-arm1 → arm2 → arm0 is a nested ladder: *freeze nothing* → *freeze the LM* → *freeze the LM
-and the vision path*. arm2 − arm0 is therefore exactly SigLIP + the projector.
-
-Describe the arms by composition, not by name. arm2's 1.11B is the second largest
-trainable set here, so it is "all the adaptation, none of it in the language model", not
-"less adaptation than LoRA". And 414.8M of arm3's 468M is the vision tower, so arm3 is
-"LoRA'd LM + expert with vision full-FT exactly as in arm1", not "LoRA vs full FT".
+arm1 → arm2 → arm0 is a nested ladder, so arm2 − arm0 is exactly SigLIP + the projector.
 
 **Invariants** (never vary per arm, or the comparison is void): batch size 32; AdamW with
 betas (0.9, 0.95), eps 1e-8, weight decay 0.01, grad clip 1.0; 20k steps, 1k warmup, cosine
@@ -74,68 +57,57 @@ saturation 0.5, hue 0.08, always applied); state dropout p=0.2; save/eval every 
 
 ## DSRL run design
 
-### What the RL agent sees
+### Observations
 
-A **compact** observation, not the VLA's. One third-person camera
-(`observation.images.robot0_agentview_left`) resized to 64×64, plus the proprioceptive
-state vector, through a small conv encoder (image latent 64, state latent 64). This matches
-the reference DSRL implementation, which never gives SAC the wrist view. Downsampling
-happens before the replay buffer, so the buffer stores 64×64.
+Noise actor: one third-person camera (`robot0_agentview_left`) at 64×64 plus the state vector,
+through a compact conv encoder (image latent 64, state latent 64). Downsampling happens before
+the replay buffer.
 
-The frozen pi05 separately receives its full observation — `robot0_agentview_left` +
-`robot0_eye_in_hand`, normalized and tokenized by the checkpoint's own processor pipeline.
-Supplying exactly one external camera also makes the checkpoint's random-external-camera
-augmentation a deterministic no-op at inference.
+Frozen pi05: `robot0_agentview_left` + `robot0_eye_in_hand` through the checkpoint's own
+processor pipeline. Supplying one external camera makes the checkpoint's random-external-camera
+augmentation a no-op at inference.
 
-### What the RL agent emits
+### Action space
 
-A **noise vector**, not an action. Action space is `Box(-1, 1, (noise_chunk_size × 32,))`,
-tanh-squashed; with the default `noise_chunk_size=1` that is 32 numbers per macro step.
-It is reshaped to `(1, 32)`, padded to pi05's full 32-step flow-matching chunk by repeating
-the last step, and handed to `predict_action_chunk(batch, noise=...)`. pi05 denoises the
-whole chunk; the first `n_action_steps=16` actions are executed.
+`Box(-1, 1, (noise_chunk_size × 32,))`, tanh-squashed. `noise_chunk_size=1` gives 32 numbers per
+macro step, reshaped to `(1, 32)`, padded to pi05's 32-step chunk by repeating the last step, and
+passed to `predict_action_chunk(batch, noise=...)`. The first `n_action_steps=16` actions run.
 
-Note the asymmetry worth stating in the paper: the actor is bounded to [-1,1] by the tanh,
-while the prior the policy was trained to denoise is N(0,1). `gaussian_warmup` seeds the
-replay buffer from the true prior so the first transitions are in-distribution.
-
-Because chunk timing is set in steps, not seconds, one macro step is 0.80 s on coffee
-(16 / 20 Hz) and 0.53 s on lamp (16 / 30 Hz). A noise vector therefore steers a different
-span of time per task.
+The actor is bounded to [-1,1] while the prior pi05 denoises is N(0,1); `gaussian_warmup` seeds
+the buffer from the true prior.
 
 ### Reward and SAC
 
-- **Reward** (`--reward_mode goal`): −1 per macro step until success, 0 on success.
-- **Discount**: 0.999 per primitive step, compounded over the executed chunk → ≈0.984 per
-  macro step at `n_action_steps=16`.
-- **SAC**: 10 Q-heads reduced by `mean` (not `min`), UTD 20, batch 256, buffer 100k
-  transitions, warmup 1,000 macro transitions, no entropy in the TD backup, automatic
-  target entropy −noise_dim/2, lr 3e-4 for actor/critic/temperature. The large ensemble +
-  mean reduction + no backup entropy is what keeps SAC stable at UTD 20; `min` over a small
-  ensemble badly underestimates Q at this UTD.
-- **Budget**: 500k primitive env steps.
+- Reward (`--reward_mode goal`): −1 per macro step until success, 0 on success.
+- Discount 0.999 per primitive step, compounded over the chunk → ≈0.984 per macro step.
+- SAC: 10 Q-heads reduced by `mean`, UTD 20, batch 256, buffer 100k, warmup 1,000 macro
+  transitions, no backup entropy, target entropy −noise_dim/2, lr 3e-4.
+- Budget: 500k primitive env steps.
 
-Units gotcha: `min_buffer_size` counts **macro** transitions (one per chunk) while
-`total_steps` counts **primitive** env steps, so updates start after
-`min_buffer_size × n_action_steps` primitive steps.
+`min_buffer_size` counts **macro** transitions and `total_steps` counts **primitive** steps, so
+updates start after `min_buffer_size × n_action_steps` primitive steps.
 
 ### Train / test sets
 
-Start conditions come from feasibility-checked **banks**, so "held out" means a start the
-DSRL agent never trained on, in the same kitchen.
+**ScrewLightbulb — two-start bank**
+`~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair/bank.json`
+One kitchen (construction seed 1 = layout 4 / style 8), one collection env, two fixed training
+starts 7.4 cm apart (yaw −61.3° / −118.5°); `PlacementBankWrapper` alternates between them on
+reset. Held out is their interpolated midpoint (yaw −89.9°). All three pass the bank's
+feasibility checks. Built by `scripts/build_lamp_pair_bank.py`.
 
-**ScrewLightbulb — placement bank, tightened**
-`~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_tight/bank.json`
-One kitchen (construction seed 1 = layout 4 / style 8), one collection env. 10 training
-placements (`s1_train_00..09`) and 2 held out (`s1_heldout_00/01`), all within a 6 cm box
-centred on `s1_reference`, the scene's native placement. The reference stays out of the
-training pool. `PlacementBankWrapper` re-applies a placement every reset, so a cell varies only
-by RoboCasa's 0.02 rad arm reset noise.
+Frozen-policy baseline — arm0 step 16000, 50 episodes per cell, 2026-09-22:
 
-Measured 2026-09-20, 25 episodes per cell: the expert-only checkpoint scores 4% at the
-reference and 0% at `s1_train_04`, 11.8 cm out. The first seed-1 bank spread its entries
-9.4–27.4 cm, which is why the box was added. The 6 cm radius is bracketed by those two points,
-not calibrated — `lamp_offset_calibration.sbatch` measures success against offset.
+| cell | success |
+|---|---|
+| `s1_start_0` | 10% |
+| `s1_start_1` | 6% |
+| `s1_mid` (held out) | 14% |
+
+Two starts rather than a pool: over 17 placements 0–11.9 cm from the reference, success is 3.8%
+overall and uncorrelated with offset (Pearson r = −0.21; ≤6 cm 6.7% vs >6 cm 3.2%, Fisher
+p = 0.26), so most placements in a pool supply no reward. Historically one fixed start reached
+`success_rate_ma10` 0.8–1.0 while a 20-placement pool reached 0.0–0.3.
 
 **CoffeePressButton — kitchen bank**
 `~/scratch/lerobot/placement_banks/coffeepressbutton_pandadex_kitchens/bank.json`
@@ -153,23 +125,21 @@ already consistent across the runs being compared.
 
 ### What gets reported
 
-`--eval_placement_sets train,heldout,reference` scores all 13 cells in one pass;
-`make_robocasa_eval_fn` aggregates them as `success_rate_train` / `_heldout` / `_reference`.
-`--eval_episodes 3`: cells are the effective sample size, and eval builds a fresh env per cell
-on every pass.
+`--eval_placement_sets train,heldout` scores 3 cells — the two training starts and the midpoint —
+aggregated as `success_rate_train` / `_heldout`, so the interpolation gap is logged directly.
+`episode/success_rate_ma10` from the collection rollouts is a free on-policy training signal.
 
-`episode/success_rate_ma10` from the collection rollouts is a free training-placement signal,
-but on-policy rather than deterministic.
+Cost: ~43 s per episode, so 3 cells × 5 episodes ≈ 11 min per pass; at `--eval_freq 25000`, ~3.6 h
+over a 500k-step run against ~10 h of training.
 
 ### SFT-side eval
 
-Lamp in-loop SFT eval is pinned to the same regime: both sub-envs are kitchen seed 1, differing
-only in lamp placement (`s1_reference`, `s1_train_04`). It is a seed-1 number, not a
-cross-kitchen one; score other kitchens post-hoc with `scripts/eval_sft_on_banks.py`. Coffee
-keeps sub-env *i* = construction seed *i*.
+Lamp in-loop SFT eval is pinned to kitchen seed 1, sub-envs differing only in lamp placement
+(`s1_reference`, `s1_train_04`) — a seed-1 number, not a cross-kitchen one. Score other kitchens
+post-hoc with `scripts/eval_sft_on_banks.py`. Coffee keeps sub-env *i* = construction seed *i*.
 
-`s1_train_04` is from the old wide bank (11.8 cm, 0% measured). Repoint the in-loop eval at a
-tight-bank placement once it exists.
+`s1_train_04` is from the old wide bank (11.8 cm, 0% measured); repoint the in-loop eval at a
+pair-bank placement.
 
 ### Checkpoint selection
 
@@ -187,8 +157,17 @@ steers).
 
 ## DSRL run matrix
 
-3 RL seeds per frozen checkpoint (one checkpoint per arm/task, selected by dual-noise eval).
-Only `--seed` varies: SAC init, exploration noise, buffer order, bank shuffle.
+A **checkpoint ladder** per task, 3 RL seeds each. Only `--seed` varies within a rung: SAC init,
+exploration noise, buffer order, bank shuffle.
+
+| task | checkpoints |
+|---|---|
+| lamp | 2k, 4k, 8k, 16k |
+| coffee | 4k, 8k, 14k, 18k |
+
+12 runs per (arm, task), 24 per arm across both, at ~14 h each. The ladder measures
+steerability against SFT training length directly, so `eval_pi05_dual_noise.py` becomes a
+prediction to check against it rather than the gate that picks one rung.
 
 ### Differences from the pre-arm-matrix runs
 
@@ -200,7 +179,7 @@ Everything else matches `DSRLConfig` defaults.
 | `--collect_envs` | 2 | 1 (lamp) |
 | `--utd_ratio` | 40 | 20 |
 | `--collect_scene_seeds` | n/a | 1 (lamp) |
-| lamp placements | 20 over 2 kitchens, 9–27 cm | 10 in one kitchen, ≤6 cm |
+| lamp placements | 20 over 2 kitchens | 2 fixed starts in one kitchen, midpoint held out |
 
 Gradient steps per transition is `utd_ratio / collect_envs`: 40/2 = 20 before, 20/1 = 20 now,
 so effective UTD is unchanged.
@@ -210,17 +189,26 @@ construction seed 0, and the lamp bank holds only seed 1.
 
 ## Throughput
 
-Measured, lamp, arm1 20k checkpoint (`scripts/profile_dsrl_throughput.py`, jobs 10882072 /
-10886462). Seconds per macro step at `collect_envs=1`:
+Measured 2026-09-22 on an L40S, lamp, UTD 20, `n_action_steps=16`
+(`scripts/profile_dsrl_throughput.py`). Seconds per macro step:
 
-**Parallel collection envs are not the lever.** The apparent 14.1 → 25.7 steps/s gain from
-1 → 8 envs comes from holding `utd_ratio` fixed, which divides gradient steps per transition by
-the env count. Scaling `utd_ratio` with `collect_envs` to hold effective UTD constant gives
-14.1 / 15.9 / 15.7 / 16.0 steps/s — a flat ~13% whatever the env count. Run seeds as concurrent
-jobs instead, at 4 CPUs each so the per-user CPU quota allows more of them.
+| collect_envs | env | frozen | prepare | SAC | total | steps/s | h/500k | VRAM | RSS |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 0.464 | 0.208 | 0.027 | 0.434 | 1.136 | 14.1 | 9.9 | 8.8G | 18.1G |
+| 2 | 0.882 | 0.231 | 0.037 | 0.425 | 1.578 | 20.3 | 6.8 | 9.0G | 21.3G |
+| 4 | 1.976 | 0.310 | 0.060 | 0.443 | 2.791 | 22.9 | 6.1 | 9.2G | 21.6G |
+| 8 | 3.963 | 0.474 | 0.096 | 0.439 | 4.974 | 25.7 | 5.4 | 9.6G | 24.1G |
 
-Obs prep is 2% of wall-clock, so the 15/16 redundant `_prepare` calls in
-`DSRLEnvWrapper.step` are not worth fixing.
+Env stepping dominates and scales linearly (~0.49 s per sub-env): `SyncVectorEnv` steps sub-envs
+sequentially. SAC is flat at ~0.43 s — one `update()` per iteration regardless of sub-env count.
+
+Holding gradient steps per transition at 20 (`utd_ratio = 20 × collect_envs`) makes throughput
+flat at ~16 steps/s for every row, so **parallel collection buys nothing at constant effective
+UTD**. The levers are `AsyncVectorEnv` (not implemented), cheaper rendering, or a lower UTD.
+
+Not VRAM-bound (9 GiB of 46). RSS above is with a 2k-transition buffer; a full 100k buffer of
+64×64 float32 observations adds roughly 10 GiB. Obs preparation is 2.4% of a macro step, so the
+redundant per-primitive-step `_prepare` in `DSRLEnvWrapper.step` is not worth fixing.
 
 ## Limitations
 
@@ -234,10 +222,15 @@ Obs prep is 2% of wall-clock, so the 15/16 redundant `_prepare` calls in
 
 ## Status
 
-- The historical lamp DSRL failure (2 kitchens × 20 placements, no learning at 500k) is most
-  plausibly the placement spread, not the RL.
+- arm0 and arm1 lamp runs exist; arms 2–4 not yet run under the current invariants.
+- arm1 lamp was at the floor (0/100 across every cell) against 6.0% for the historical
+  expert-only checkpoint. arm0 recovers it — 20% / 0% / 20% in-loop at eval steps 5k / 10k / 15k
+  — which points at the trainable set, not the LR or the augmentation.
+- `eval_freq=5000` with `save_freq=2000` means no saved checkpoint carries an in-loop number.
+  In-loop uses 4 cameras with the random-external swap live, the DSRL view uses 2, so in-loop
+  numbers and bank numbers are not directly comparable.
 
 ## Open
 
-1. Calibrate the box — `lamp_offset_calibration.sbatch`, arm0 step 15000, offsets 0–12 cm.
+1. Align `save_freq` and `eval_freq` so selected checkpoints carry in-loop numbers.
 2. Coffee may need fewer than 3 RL seeds; unmeasured.

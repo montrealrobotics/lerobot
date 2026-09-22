@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import os
+import random
+import signal
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
@@ -29,6 +32,50 @@ from lerobot.rl.dsrl.noise_actor import (
 )
 from lerobot.utils.constants import OBS_IMAGE, OBS_STATE
 
+RESUME_FILENAME = "resume_state.pt"
+
+# Set by the signal handler, polled once per training iteration. Slurm sends SIGTERM (and
+# SIGUSR1 with --signal=B:USR1@N) before killing a preempted job.
+_PREEMPTED = False
+
+
+def _install_preemption_handler() -> None:
+    def handler(signum, _frame):
+        global _PREEMPTED
+        if not _PREEMPTED:
+            print(f"[resume] signal {signum} received; checkpointing after this iteration", flush=True)
+        _PREEMPTED = True
+
+    for sig in (signal.SIGTERM, signal.SIGUSR1):
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, OSError):  # not on the main thread, or unsupported
+            pass
+
+
+def _rng_state() -> dict:
+    return {
+        "torch": torch.get_rng_state(),
+        "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+        "numpy": np.random.get_state(),
+        "python": random.getstate(),
+    }
+
+
+def _restore_rng_state(state: dict) -> None:
+    torch.set_rng_state(state["torch"])
+    if state.get("torch_cuda") is not None and torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(state["torch_cuda"])
+    np.random.set_state(state["numpy"])
+    random.setstate(state["python"])
+
+
+def _atomic_torch_save(payload: dict, path: Path) -> None:
+    """Write via a temp file and rename, so a second preemption cannot corrupt the state."""
+    tmp = path.with_name(path.name + ".tmp")
+    torch.save(payload, tmp)
+    os.replace(tmp, path)
+
 
 def train_dsrl(
     env,
@@ -47,6 +94,7 @@ def train_dsrl(
     wandb_kwargs: dict | None = None,
     dsrl_config: DSRLConfig | None = None,
     eval_fn: Callable[[NoiseActorPolicy, int], dict[str, float]] | None = None,
+    resume: bool = False,
 ) -> NoiseActorPolicy:
     """Run DSRL training. Returns the trained NoiseActorPolicy.
 
@@ -64,6 +112,9 @@ def train_dsrl(
         dsrl_config: DSRL hyperparameters (encoders, Q-networks, training).
         wandb_kwargs: Optional ``{"enable": True, "project": "...", "name": "..."}``.
         eval_fn: Optional ``(noise_actor, step) -> {"metric": float}``.
+        resume: Continue from ``<output_dir>/resume_state.pt`` if it exists. The state is
+            written when the process is signalled (Slurm preemption) and every
+            ``dsrl_config.resume_save_freq`` env steps if that is non-zero.
     """
     dsrl_cfg = dsrl_config or DSRLConfig()
     output_dir = Path(output_dir)
@@ -72,6 +123,23 @@ def train_dsrl(
     device = torch.device(device)
     torch.manual_seed(seed)
     np.random.seed(seed)
+    random.seed(seed)
+
+    # Loaded before WandB so a resumed run reattaches to its original run id instead of
+    # starting a fresh one and fragmenting the curves.
+    resume_path = output_dir / RESUME_FILENAME
+    resume_state: dict | None = None
+    if resume and resume_path.exists():
+        print(f"[resume] loading {resume_path}")
+        resume_state = torch.load(resume_path, map_location="cpu", weights_only=False)
+        print(
+            f"[resume] env_step={resume_state['env_step']} "
+            f"training_step={resume_state['training_step']} "
+            f"buffer={resume_state['buffer']['size'] if resume_state['buffer']['initialized'] else 0}"
+        )
+    elif resume:
+        print(f"[resume] no state at {resume_path}; starting fresh")
+    _install_preemption_handler()
 
     # WandB
     wandb_run = None
@@ -85,6 +153,8 @@ def train_dsrl(
                 name=wandb_kwargs.get("name"),
                 entity=wandb_kwargs.get("entity"),
                 dir=str(wandb_kwargs.get("dir", output_dir)),
+                id=(resume_state or {}).get("wandb_id"),
+                resume="allow" if resume_state is not None else None,
                 config={
                     "noise_dim": noise_dim,
                     "total_steps": total_steps,
@@ -193,12 +263,58 @@ def train_dsrl(
     recent_shaped_returns: deque[float] = deque(maxlen=10)
     recent_successes: deque[float] = deque(maxlen=10)
 
+    env_step = 0
+
+    def save_resume_state() -> None:
+        _atomic_torch_save(
+            {
+                "env_step": env_step,
+                "training_step": training_step,
+                "episode_count": episode_count,
+                "nonfinite_transitions": nonfinite_transitions,
+                "noise_actor": {k: v.cpu() for k, v in noise_actor.state_dict().items()},
+                # Critic heads, target heads and log_alpha. The shared encoder lives on the
+                # policy and is covered by "noise_actor" above.
+                "algorithm": {k: v.cpu() for k, v in algorithm.state_dict().items()},
+                "optimizers": {k: opt.state_dict() for k, opt in algorithm.get_optimizers().items()},
+                "buffer": buffer.state_dict(),
+                "recent_raw_returns": list(recent_raw_returns),
+                "recent_shaped_returns": list(recent_shaped_returns),
+                "recent_successes": list(recent_successes),
+                "rng": _rng_state(),
+                "wandb_id": wandb_run.run.id if wandb_run is not None else None,
+            },
+            resume_path,
+        )
+        print(f"[resume] wrote {resume_path} at env_step={env_step}", flush=True)
+
+    if resume_state is not None:
+        noise_actor.load_state_dict(
+            {k: v.to(device) for k, v in resume_state["noise_actor"].items()}
+        )
+        algorithm.load_state_dict(resume_state["algorithm"], device=device)
+        for name, opt in algorithm.get_optimizers().items():
+            if name in resume_state["optimizers"]:
+                opt.load_state_dict(resume_state["optimizers"][name])
+        buffer.load_state_dict(resume_state["buffer"])
+        env_step = resume_state["env_step"]
+        training_step = resume_state["training_step"]
+        episode_count = resume_state["episode_count"]
+        nonfinite_transitions = resume_state["nonfinite_transitions"]
+        recent_raw_returns.extend(resume_state["recent_raw_returns"])
+        recent_shaped_returns.extend(resume_state["recent_shaped_returns"])
+        recent_successes.extend(resume_state["recent_successes"])
+        _restore_rng_state(resume_state["rng"])
+        # The in-flight episodes are gone with the old process; start fresh ones.
+        policy_obs, _ = dsrl_env.reset()
+        del resume_state
+        print(f"[resume] resuming at env_step={env_step}, buffer={len(buffer)}")
+
     print(
         f"Starting DSRL training for {total_steps} environment steps "
-        f"(noise_dim={noise_dim}, collect_envs={num_collect_envs})"
+        f"(noise_dim={noise_dim}, collect_envs={num_collect_envs}, from env_step={env_step})"
     )
 
-    env_step = 0
     while env_step < total_steps:
         # Until the buffer is warm, draw noise from the frozen policy's own prior N(0, 1)
         # rather than from the untrained actor, whose tanh squash bounds it to [-1, 1] and
@@ -351,11 +467,26 @@ def train_dsrl(
             noise_actor.save_pretrained(ckpt_dir)
             print(f"Checkpoint saved to {ckpt_dir}")
 
+        if dsrl_cfg.resume_save_freq and env_step % dsrl_cfg.resume_save_freq < max(collected_steps, 1):
+            save_resume_state()
+
+        if _PREEMPTED:
+            save_resume_state()
+            if wandb_run is not None:
+                wandb_run.finish()
+            dsrl_env.close()
+            print(f"[resume] exiting on signal at env_step={env_step}", flush=True)
+            raise SystemExit(99)
+
     # ── Final save ──────────────────────────────────────────────────────
     final_dir = output_dir / "final"
     final_dir.mkdir(parents=True, exist_ok=True)
     noise_actor.save_pretrained(final_dir)
     print(f"Training complete. Final model saved to {final_dir}")
+
+    # A finished run has nothing to resume, and leaving the state behind would silently
+    # rewind a later --resume into this same output_dir.
+    resume_path.unlink(missing_ok=True)
 
     if wandb_run is not None:
         wandb_run.finish()

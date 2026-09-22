@@ -39,10 +39,8 @@ every one of them. **Only cluster plumbing may differ between them** — both en
 "$TASK" "$@"`, so the fairness invariants live in the training script and cannot drift
 between launchers.
 
-**Which cluster to use:** an arm is only comparable to the arms it is contrasted against.
-`arm1_full_ft` (lamp, seed 42, lr ×1) was trained on Alliance H100s, so running its
-ablation on Mila L40S puts a GPU/driver/toolchain difference inside the contrast. Prefer
-whichever cluster already holds the arm you are comparing to.
+**Which cluster to use:** prefer whichever cluster already holds the arm you are comparing
+against — `arm1_full_ft` (lamp, seed 42, lr ×1) is on Alliance H100s.
 
 ## What the launchers do before training
 
@@ -77,9 +75,8 @@ would write ~460 GiB against a 1 TiB scratch quota. `arm0_expert_only` trains 69
 parameters rather than 4.14B, so its optimizer state is ~5.5 GiB and a rung is ~14 GiB.
 
 The launchers run a background pruner that deletes `training_state/` from every checkpoint
-**except the newest**. Resume only ever reads `last`, and pruned rungs keep their full
-`pretrained_model/`, so the ladder stays usable for eval and for dual-noise selection —
-which is what the ladder exists for. Budget `rungs × 8.7 + 14.1` GiB.
+except the newest; pruned rungs keep their full `pretrained_model/`. Budget
+`rungs × 8.7 + 14.1` GiB.
 
 - `SFT_PRUNE_OPTIMIZER_STATE=0` keeps everything.
 - `SFT_STEPS` / `SFT_SAVE_FREQ` override the preflight projection only, not the run.
@@ -105,27 +102,21 @@ entry matches — so one wrong path is silent and leaves SigLIP frozen, which is
 worst configuration. `--dry-run` is the guard; run it before queueing an arm.
 
 **2. `modules_to_save` is the only route for the full-FT islands.**
-`PreTrainedPolicy.wrap_with_peft` clears `requires_grad` on every parameter before calling
-`get_peft_model`, so `full_training_modules` is the only way to keep SigLIP, the projector
-and the action projections training — and the only way to get them into the checkpoint,
-since `save_checkpoint` calls `PeftModel.save_pretrained`, which writes adapters plus
-`modules_to_save` and nothing else. Re-enabling `requires_grad` by hand trains those
-weights and then silently drops them at save time.
+`wrap_with_peft` clears `requires_grad` on every parameter, and `save_checkpoint` writes only
+adapters plus `modules_to_save`. So `full_training_modules` is the only way to keep SigLIP, the
+projector and the action projections training *and* saved — re-enabling `requires_grad` by hand
+trains them and then silently drops them at save time.
 
 **3. Per-group LRs follow the schedule proportionally.**
 `CosineDecayWithWarmupSchedulerConfig` builds a `LambdaLR` that multiplies each group's own
 `initial_lr` by one shared lambda, so `peak_lr`/`decay_lr` enter only as their ratio. They
 are set from the arm's largest group, and every group decays to 10% of its own base LR.
 
-**4. Dead weights** (verified by forward+backward, identical in every arm — not a bug and
-not a between-arm confound). `paligemma.lm_head`, `gemma_expert.lm_head`, and layer 17 (the
-last of 18) of the VLM language model's `o_proj` / `gate_proj` / `up_proj` / `down_proj`
-plus its post-attention layernorm never receive a gradient; layer 17's `q_proj` receives
-exactly zero. pi05's suffix attends to the prefix's per-layer K/V, so the final prefix
-layer's own output is never read, and pi05 never generates tokens. In arm3/arm4 this appears
-as 8 LoRA parameters (4 modules × A,B at layer 17) with `grad=None`. Separately, every
-`lora_A` has exactly zero gradient on the first backward because `lora_B` is
-zero-initialised — standard LoRA, not a failure.
+**4. Dead weights are expected**, identically in every arm: both `lm_head`s and layer 17 (the
+last) of the VLM language model's `o_proj` / `gate_proj` / `up_proj` / `down_proj` plus its
+post-attention layernorm never receive a gradient. In arm3/arm4 this shows as 8 LoRA parameters
+with `grad=None`. Every `lora_A` also has zero gradient on the first backward, since `lora_B` is
+zero-initialised. Not a bug and not a between-arm confound.
 
 **5. draccus cannot decode `Literal`.** `PreTrainedConfig.from_pretrained` fails on configs
 that explicitly saved such a field. Any script that loads a checkpoint registers a decoder
@@ -144,7 +135,7 @@ python examples/training/eval_pi05_dual_noise.py --run-dir <run> --task lamp \
 
 # SFT-only success on the DSRL bank cells (the baseline DSRL numbers are compared against).
 python scripts/eval_sft_on_banks.py --sft_run <run> --steps 20000 \
-    --placement_bank ~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1/bank.json \
+    --placement_bank ~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair/bank.json \
     --episodes_per_cell 20 --output_dir <out>
 
 # Re-score a checkpoint under both lamp eval protocols, split per sub-env.
@@ -159,22 +150,29 @@ python scripts/eval_lamp_protocol_ab.py --protocol legacy --n_episodes 50 \
 
 Design: [SFT_ARMS_DSRL.md](SFT_ARMS_DSRL.md).
 
-### 1. Build the tight lamp placement bank (once)
+### 1. Lamp two-start bank
 
 ```bash
-BANK=~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_tight
-python scripts/build_lamp_placement_bank.py \
-    --scene_seeds 1 --max_offset_m 0.06 \
-    --n_train 10 --n_heldout 2 \
-    --train_min_sep_m 0.015 --heldout_min_sep_m 0.025 \
-    --n_candidates 400 \
+sbatch lamp_pair_bank.sbatch   # builds the bank + its 50-episode frozen-SFT baseline
+```
+
+Or directly, from the calibration bank:
+
+```bash
+BANK=~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair
+python scripts/build_lamp_pair_bank.py \
+    --source_bank ~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_calib/bank.json \
+    --pair s1_train_00,s1_train_06 \
     --out $BANK/bank.json --render_dir $BANK/renders
 ```
 
-Yield inside the box is low, hence 400 candidates. The builder warns `!! bank is short` if it
-cannot fill the quota. Check the renders before use.
+Writes `train` = the two starts, `heldout` = their interpolated midpoint; refuses to write if
+any of the three fails a feasibility check (`--allow_failed` overrides). Check the renders.
 
-### 2. Select the checkpoint
+`scripts/build_lamp_placement_bank.py` builds a general pool instead. Success does not vary with
+offset over 0–12 cm (measured 2026-09-22), so its `--max_offset_m` needs a reason.
+
+### 2. Dual-noise scores over the ladder
 
 ```bash
 python examples/training/eval_pi05_dual_noise.py --run-dir <run> --task lamp \
@@ -182,25 +180,52 @@ python examples/training/eval_pi05_dual_noise.py --run-dir <run> --task lamp \
 python scripts/select_sft_checkpoint.py --run-dir <run>
 ```
 
-Writes `<run>/selected_checkpoint.json`.
+Writes `<run>/selected_checkpoint.json`. DSRL runs a ladder rather than one selected rung, so
+this is the prediction to compare against, not the gate.
 
-### 3. Launch DSRL — 3 seeds per frozen checkpoint
+### 3. Launch DSRL — 4 checkpoints x 3 seeds
 
 ```bash
-CKPT=<run>/checkpoints/<selected_step>/pretrained_model
-for S in 0 1 2; do
-  sbatch --job-name=dsrl_arm0_lamp_s$S dsrl_mila.sbatch lamp $CKPT $S
+RUN=<sft_run>
+for STEP in 2000 4000 8000 16000; do            # coffee: 4000 8000 14000 18000
+  for S in 0 1 2; do
+    sbatch --job-name=dsrl_arm0_lamp_${STEP}_s$S \
+        dsrl_mila.sbatch lamp $RUN/checkpoints/$(printf %06d $STEP)/pretrained_model $S
+  done
 done
 ```
 
-`dsrl_mila.sbatch <lamp|coffee> <policy_path> <seed> [extra args]` holds the per-task
-invariants (robot, fps, controller, bank, eval sets, `--collect_scene_seeds`) so they cannot
-drift between seeds or arms; anything after the seed is forwarded to the training script.
-Override the GPU with `sbatch --gres=gpu:rtx8000:1 dsrl_mila.sbatch ...`.
+`dsrl_mila.sbatch <lamp|coffee> <policy_path> <seed> [extra args]` (Mila) and `dsrl_drac.sbatch`
+(Alliance) hold the per-task invariants — robot, fps, controller, bank, eval sets, prompt,
+`--collect_scene_seeds`; anything after the seed is forwarded. Override the GPU with
+`sbatch --gres=gpu:rtx8000:1 ...` on Mila, `--gpus=...` on Alliance.
+
+The two launchers differ only in cluster plumbing. Alliance additionally probes for a working
+headless GL backend (`scripts/check_gl_backend.py`) because MIG slices cannot do EGL, and its
+banks must be rsynced from Mila first.
+
+Preemption is handled: on SIGTERM/SIGUSR1 the trainer writes `<output_dir>/resume_state.pt`
+(actor, critics, targets, log_alpha, all three optimizers, the replay buffer, counters and RNG)
+and exits 99, and the launcher requeues the job. Both launchers always pass `--resume`, so the
+requeued job continues where it stopped; the state is deleted on normal completion. It is
+~2.9 GiB at the 31k transitions a 500k-step run reaches, a few seconds to write.
+
+`--resume_save_freq N` also dumps every N env steps, for crashes that send no signal. Off by
+default. A 500k run is ~10 h training + ~3.6 h eval.
+
+Smoke-test the path first (~15 min):
+
+```bash
+sbatch --job-name=dsrl_smoke --time=1:00:00 dsrl_mila.sbatch lamp $CKPT 0 \
+    --total_steps 4000 --min_buffer_size 20 --eval_freq 2000 --eval_episodes 1 --save_freq 2000
+```
 
 ### 4. Supporting jobs
 
 ```bash
 sbatch dsrl_profile.sbatch             # macro-step time split + VRAM/RSS vs --collect_envs
-sbatch lamp_offset_calibration.sbatch  # frozen-SFT success vs lamp offset, sets --max_offset_m
+sbatch lamp_offset_calibration.sbatch  # frozen-SFT success vs lamp offset
 ```
+
+`eval_sft_on_banks.py --steps` needs an exact checkpoint dir: rungs are multiples of
+`save_freq` (2000), which the `eval_freq` (5000) in-loop eval steps are not.

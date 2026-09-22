@@ -43,6 +43,10 @@ class DSRLConfig:
     utd_ratio: int = 20
     log_freq: int = 100
     save_freq: int = 10_000
+    # Also write the full resume state (buffer included, a few GiB) every N env steps.
+    # 0 = only when the process is signalled, which is enough for Slurm preemption and
+    # avoids a multi-GiB write on every save.
+    resume_save_freq: int = 0
     eval_freq: int = 0
     # Seed the replay buffer by sampling noise from the diffusion prior N(0, 1) until
     # ``min_buffer_size`` transitions are collected, instead of querying the untrained

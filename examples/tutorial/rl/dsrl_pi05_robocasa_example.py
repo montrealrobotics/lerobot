@@ -1024,6 +1024,18 @@ def main():
     )
     parser.add_argument("--log_freq", type=int, default=100)
     parser.add_argument("--save_freq", type=int, default=10_000)
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Continue from <output_dir>/resume_state.pt if present. The state is written on "
+        "SIGTERM/SIGUSR1 (Slurm preemption) and the process exits 99.",
+    )
+    parser.add_argument(
+        "--resume_save_freq",
+        type=int,
+        default=0,
+        help="Also write the resume state every N env steps. 0 = on signal only.",
+    )
     # WandB
     parser.add_argument("--wandb_enable", action="store_true")
     parser.add_argument("--wandb_project", type=str, default="lerobot-dsrl")
@@ -1381,6 +1393,7 @@ def main():
         log_freq=args.log_freq,
         save_freq=args.save_freq,
         eval_freq=args.eval_freq,
+        resume_save_freq=args.resume_save_freq,
     )
 
     if args.eval_only:
@@ -1403,6 +1416,7 @@ def main():
         output_dir=args.output_dir,
         wandb_kwargs=wandb_kwargs,
         eval_fn=eval_fn,
+        resume=args.resume,
     )
 
     env.close()
