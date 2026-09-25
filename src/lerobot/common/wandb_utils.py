@@ -144,7 +144,11 @@ class WandBLogger:
             # TODO(rcadene): split train and eval, and run async eval with job_type="eval"
             job_type="train_eval",
             resume="must" if cfg.resume else None,
-            mode=self.cfg.mode if self.cfg.mode in ["online", "offline", "disabled"] else "online",
+            # Fall back to $WANDB_MODE before "online": passing mode= explicitly overrides the
+            # env var, so without this an offline compute node (no internet) blocks on
+            # wandb.init until it times out, even with WANDB_MODE=offline exported.
+            mode=mode if (mode := self.cfg.mode or os.environ.get("WANDB_MODE"))
+            in ["online", "offline", "disabled"] else "online",
         )
         run_id = wandb.run.id
         # NOTE: We will override the cfg.wandb.run_id with the wandb run id.

@@ -18,9 +18,9 @@
 #SBATCH --signal=B:TERM@300
 #SBATCH --output=/home/akur/scratch/lerobot/slurm_logs/%x-%j.out
 
-# A 500k-step run is ~10 h of training plus ~3.6 h of eval. train_dsrl has NO resume, so a job
-# killed at the wall clock loses everything but its saved step_* noise actors. If this cluster
-# caps below ~16 h, lower --total_steps or --eval_freq rather than hoping.
+# A 500k-step run is ~10 h of training plus ~3.6 h of eval. A job that hits the wall clock
+# writes resume_state.pt and requeues (see the trap at the bottom), so no --total_steps
+# trimming is needed to fit a cluster's cap.
 
 set -euo pipefail
 
@@ -42,6 +42,14 @@ export PYTHONUNBUFFERED=1
 export HF_HOME=/scratch/akur/hf_cache
 export OMP_NUM_THREADS=4
 export TOKENIZERS_PARALLELISM=false
+# The NVIDIA driver caches compiled shaders under ~/.cache/nvidia/GLCache -- in $HOME, a
+# filesystem shared by every job on every node. Concurrent EGL processes (three per DSRL
+# pack, several eval workers per SFT job) race on those files, and a reader that catches a
+# half-written shader makes the driver abort: SIGABRT, exit 134, no Python traceback. That
+# matches the dsrl_arm0_coffee_04000 crashes on nibi and rorqual, whose cache files were
+# being written inside the crash window. MuJoCo compiles a handful of shaders, so disabling
+# the disk cache costs nothing measurable.
+export __GL_SHADER_DISK_CACHE=0
 export NUMBA_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/numba_${SLURM_JOB_ID}"
 export TRITON_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/triton_${SLURM_JOB_ID}"
 mkdir -p "$NUMBA_CACHE_DIR" "$TRITON_CACHE_DIR" "$SCRATCH/lerobot/slurm_logs"
@@ -97,38 +105,9 @@ if fail:
 print("preflight OK")
 PREFLIGHT
 
-# Task invariants. Controller and fps must match what the checkpoint was trained on: a wrong
-# controller silently falls back to OSC_POSE and every rollout is garbage. --prompt is the
-# dataset's task string, used only if the env exposes no ep_meta['lang'] (the script's own
-# default is a coffee string, wrong for both tasks).
-case "$TASK" in
-  lamp)
-    BANK=$BANKS/screwlightbulb_xarm6_seed1_pair/bank.json
-    TASK_ARGS=(
-      --task ScrewLightbulb --robot XArm6DexLeapRHOmron --fps 30
-      --controller "/project/6068036/akur/robosuite/robosuite/controllers/config/robots/default_xarm6dexleaprhomron_joint_pos.json"
-      --collect_envs 1 --collect_scene_seeds 1
-      --placement_bank "$BANK"
-      --eval_placement_sets train,heldout
-      --prompt "screw the light bulb into the lamp base"
-    )
-    ;;
-  coffee)
-    BANK=$BANKS/coffeepressbutton_pandadex_kitchens/bank.json
-    TASK_ARGS=(
-      --task CoffeePressButton --robot PandaDexLeapRHOmron --fps 20
-      --collect_envs 1
-      --kitchen_bank "$BANK"
-      --eval_kitchen_sets heldout,reference
-      --reject_start_rot_deg 10 --reject_start_pos_cm 3
-      --prompt "press the button on the coffee machine to serve coffee"
-    )
-    ;;
-  *) echo "unknown task '$TASK' (lamp|coffee)" >&2; exit 2 ;;
-esac
-
-# The banks are built on Mila; rsync them over before the first run here.
-[ -f "$BANK" ] || { echo "no bank at $BANK -- rsync it from Mila" >&2; exit 2; }
+# Per-task invariants (robot, fps, controller, bank, eval sets, prompt) -- shared with
+# dsrl_drac_pack.sbatch so the two launchers cannot drift apart.
+source "$REPO/dsrl_task_args.sh"
 
 OUT=$SCRATCH/lerobot/outputs/dsrl/${SLURM_JOB_NAME:-dsrl_${TASK}}/seed${SEED}
 
