@@ -200,35 +200,43 @@ PIDS=(); TAGS=(); OUTS=()
 
 # One run in a background subshell, retried if it ABORTS AT STARTUP.
 #
-# Intermittently, every process of a pack dies with SIGABRT (exit 134, no Python traceback)
-# within the first minutes, while render contexts are being created -- seen 3 times, always
-# at startup, never once a run is past it (lamp packs ran 12 h without one). The cause is
-# not established; it looks GPU/driver-level. A run that dies that way before it has ever
-# written resume_state.pt has lost nothing, so it is simply retried (at most MAX_ATTEMPTS).
-# Any other failure (e.g. the rc=1 OOM) still fails loudly. SIGTERM is forwarded to the
-# current child, so preemption and the wall-clock requeue behave exactly as before.
-MAX_ATTEMPTS=3
+# Intermittently a run dies with SIGABRT (exit 134, no Python traceback) on its first
+# collection step, inside robocasa_env.step -> robosuite/MuJoCo/EGL native code. Measured
+# 2026-09-24: ~1 in 8 packs on nibi, ~1 in 2 startups on rorqual. It hits restarts after a
+# requeue too, not just fresh runs, and never a run that is past startup. Cause unknown.
+#
+# A startup abort loses nothing -- the retry resumes from resume_state.pt if there is one,
+# else starts fresh -- so it is retried, up to MAX_ATTEMPTS. "Startup" = the attempt ran
+# under STARTUP_S, or there is resume state to fall back on. An abort hours into a run with
+# NO resume state is NOT retried: that would silently discard real progress, and it would be
+# a new failure mode worth seeing. Any other failure (e.g. the rc=1 OOM) fails loudly.
+# SIGTERM is forwarded to the current child, so preemption and the wall-clock requeue
+# behave exactly as before.
+MAX_ATTEMPTS=5
+STARTUP_S=1800
 run_one () {
     local out=$1; shift
-    local attempt=1 rc child="" termed=""
+    local attempt=1 rc child="" termed="" t0
     # `|| true`: under set -e a failed kill (child already gone, e.g. TERM during the retry
     # pause) would otherwise exit the subshell from inside the trap with rc=1.
     trap 'termed=1; if [ -n "$child" ]; then kill -TERM "$child" 2>/dev/null || true; fi' TERM
     : > "$out/run.log"
     while :; do
+        t0=$SECONDS
         "$@" >> "$out/run.log" 2>&1 &
         child=$!
         rc=0; wait "$child" || rc=$?
         # If the TERM trap interrupted `wait`, the child is still alive: wait for its real
         # status. (Testing rc > 128 would confuse that with a genuine exit 134.)
         if kill -0 "$child" 2>/dev/null; then rc=0; wait "$child" || rc=$?; fi
-        if [ "$rc" = "134" ] && [ -z "$termed" ] && [ ! -f "$out/resume_state.pt" ] \
-                && [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+        if [ "$rc" = "134" ] && [ -z "$termed" ] && [ "$attempt" -lt "$MAX_ATTEMPTS" ] \
+                && { [ $((SECONDS - t0)) -lt "$STARTUP_S" ] || [ -f "$out/resume_state.pt" ]; }; then
             attempt=$((attempt + 1))
-            # Nothing of value exists without resume state; drop the aborted attempt's wandb
-            # dirs so they are not later uploaded as a stub run.
-            rm -rf "$out"/wandb/run-* "$out"/wandb/offline-run-*
-            echo "[retry] SIGABRT at startup; attempt $attempt/$MAX_ATTEMPTS at $(date)" >> "$out/run.log"
+            # Without resume state nothing survives the abort, so drop its wandb dirs rather
+            # than leave a stub run to be uploaded. WITH resume state the retry continues the
+            # same wandb run, so its history must be kept.
+            [ -f "$out/resume_state.pt" ] || rm -rf "$out"/wandb/run-* "$out"/wandb/offline-run-*
+            echo "[retry] SIGABRT at startup after $((SECONDS - t0)) s; attempt $attempt/$MAX_ATTEMPTS at $(date)" >> "$out/run.log"
             sleep 60
             # A TERM that lands during the pause must not start a fresh attempt: report it the
             # way an interrupted run would, so the pack still requeues.
