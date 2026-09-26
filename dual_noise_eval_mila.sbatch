@@ -5,7 +5,7 @@
 #   sbatch --job-name=dn_arm2_lamp   dual_noise_eval.sbatch <run-dir> lamp
 #
 # Extra args pass through to eval_pi05_dual_noise.py, e.g. --steps 16000 20000,
-# --n-episodes 50, --no-wandb.
+# --episodes-per-cell 25, --no-wandb.
 #SBATCH --partition main
 #SBATCH --gres=gpu:l40s:1
 #SBATCH --cpus-per-task=8

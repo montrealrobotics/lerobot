@@ -149,7 +149,8 @@ steers).
 
 `scripts/select_sft_checkpoint.py` turns the ladder into one choice:
 
-1. Score = duplicated-noise success.
+1. Score = duplicated-noise success on the DSRL **training** cells. Held-out cells are
+   reported but never used, so the held-out DSRL number stays held out.
 2. Smooth over 3 adjacent rungs. A 20-episode rung has ~±9pp standard error, so argmax over a
    10-rung ladder mostly selects eval noise.
 3. Among rungs within one standard error of the best smoothed score, take the **earliest** —

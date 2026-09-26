@@ -5,7 +5,10 @@
 #   sbatch --job-name=dn_arm2_lamp   dual_noise_eval.sbatch <run-dir> lamp
 #
 # Extra args pass through to eval_pi05_dual_noise.py, e.g. --steps 16000 20000,
-# --n-episodes 50, --no-wandb.
+# --episodes-per-cell 25, --no-wandb.
+#
+# On rorqual override the output path at submit time, as for sft_arms.sbatch:
+#   sbatch --output=/scratch/$USER/lerobot/slurm_logs/%x-%j.out dual_noise_eval.sbatch ...
 #SBATCH --account=def-kdarvish
 #SBATCH --gpus=h100:1
 #SBATCH --cpus-per-task=8
@@ -19,14 +22,33 @@ RUN_DIR=${1:?usage: sbatch dual_noise_eval.sbatch <run-dir> <task> [extra args..
 TASK=${2:?usage: sbatch dual_noise_eval.sbatch <run-dir> <task> [extra args...]}
 shift 2
 
-REPO=/project/6068036/akur/lerobot
+# Cluster plumbing, mirroring sft_arms.sbatch.
+case "${SLURM_CLUSTER_NAME:-$(hostname)}" in
+  nibi*)
+    REPO=/project/6068036/akur/lerobot
+    HF_HOME_DIR=/scratch/akur/hf_cache
+    OFFLINE=0 ;;
+  rorqual*)
+    # No internet on compute nodes and no ~/scratch symlink.
+    REPO=/lustre09/project/6068036/akur/lerobot
+    HF_HOME_DIR=/scratch/$USER/hf_cache
+    export LEROBOT_PLACEMENT_BANKS=/scratch/$USER/lerobot/placement_banks
+    OFFLINE=1 ;;
+  *) echo "unknown cluster '${SLURM_CLUSTER_NAME:-$(hostname)}' -- add it to the case above" >&2; exit 2 ;;
+esac
+[ -d "$REPO" ] || { echo "no repo at $REPO" >&2; exit 2; }
 cd "$REPO"
 
 module load StdEnv/2023 python/3.12.4
 source .venv/bin/activate
 
 export PYTHONUNBUFFERED=1
-export HF_HOME=/scratch/akur/hf_cache
+export HF_HOME=$HF_HOME_DIR
+if [ "$OFFLINE" = "1" ]; then
+    export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_DATASETS_OFFLINE=1
+    export WANDB_MODE=offline
+    echo "offline cluster: HF from cache at $HF_HOME, wandb logging offline"
+fi
 export OMP_NUM_THREADS=4
 export TOKENIZERS_PARALLELISM=false
 export TORCHINDUCTOR_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID}"

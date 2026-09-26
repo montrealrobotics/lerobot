@@ -404,7 +404,12 @@ class RoboCasaEnv(gym.Env):
         """Render the environment using cached images from the last step/reset."""
         if self._last_rendered_images is None:
             raise RuntimeError("render() called before reset(). Call reset() first.")
-        return self._last_rendered_images["robot0_agentview_right"]
+        # Prefer agentview_right (the historical render view), but fall back to whatever was
+        # actually rendered: the DSRL camera set is agentview_left + eye_in_hand only.
+        for camera in ("robot0_agentview_right", "robot0_agentview_left"):
+            if camera in self._last_rendered_images:
+                return self._last_rendered_images[camera]
+        return next(iter(self._last_rendered_images.values()))
 
     def _format_raw_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
         """Format raw observations from RoboCasa into the expected format."""

@@ -111,6 +111,7 @@ source "$REPO/dsrl_task_args.sh"
 
 OUT=$SCRATCH/lerobot/outputs/dsrl/${SLURM_JOB_NAME:-dsrl_${TASK}}/seed${SEED}
 
+STARTED=$(mktemp)  # timestamp: was resume state written during this job?
 # Preemption / wall-clock: the trainer writes <output_dir>/resume_state.pt on SIGTERM and exits
 # 99. Slurm signals the step directly on preemption; the trap covers --signal=B:TERM@300, which
 # only reaches the batch script. --open-mode=append keeps the requeued run's log.
@@ -126,7 +127,7 @@ python examples/tutorial/rl/dsrl_pi05_robocasa_example.py \
     --eval_freq 25000 --eval_episodes 5 \
     --seed "$SEED" \
     --output_dir "$OUT" \
-    --resume \
+    --resume --resume_save_freq 100000 \
     --wandb_enable --wandb_name "${SLURM_JOB_NAME:-dsrl_${TASK}}_seed${SEED}" \
     "$@" &
 PY_PID=$!
@@ -139,6 +140,14 @@ if [ "$RC" -gt 128 ]; then RC=0; wait $PY_PID || RC=$?; fi
 
 if [ "$RC" = "99" ]; then
     echo "[sbatch] checkpointed at the signal; requeueing ${SLURM_JOB_ID}"
+    scontrol requeue "${SLURM_JOB_ID}"
+    exit 0
+fi
+# SIGKILL (OOM, node failure) gives no chance to checkpoint. Requeue only if the periodic
+# --resume_save_freq dump advanced during this job, so a run that dies before its first dump
+# cannot loop forever.
+if [ "$RC" = "137" ] && [ "$OUT/resume_state.pt" -nt "$STARTED" ]; then
+    echo "[sbatch] killed (rc=137) after a periodic resume dump; requeueing ${SLURM_JOB_ID}"
     scontrol requeue "${SLURM_JOB_ID}"
     exit 0
 fi

@@ -131,7 +131,7 @@ draccus.decode.register(typing.Literal, lambda raw_value, path=(): raw_value)
 ```bash
 # Dual-noise checkpoint selection over the ladder (the selection metric — see SFT_ARMS_DSRL.md).
 python examples/training/eval_pi05_dual_noise.py --run-dir <run> --task lamp \
-    --steps 8000 12000 16000 20000 --n-episodes 20
+    --steps 8000 12000 16000 20000 --episodes-per-cell 20
 
 # SFT-only success on the DSRL bank cells (the baseline DSRL numbers are compared against).
 python scripts/eval_sft_on_banks.py --sft_run <run> --steps 20000 \
@@ -176,7 +176,7 @@ offset over 0–12 cm (measured 2026-09-22), so its `--max_offset_m` needs a rea
 
 ```bash
 python examples/training/eval_pi05_dual_noise.py --run-dir <run> --task lamp \
-    --steps 8000 12000 16000 20000 --n-episodes 50
+    --steps 8000 12000 16000 20000 --episodes-per-cell 25
 python scripts/select_sft_checkpoint.py --run-dir <run>
 ```
 
@@ -210,8 +210,14 @@ and exits 99, and the launcher requeues the job. Both launchers always pass `--r
 requeued job continues where it stopped; the state is deleted on normal completion. It is
 ~2.9 GiB at the 31k transitions a 500k-step run reaches, a few seconds to write.
 
-`--resume_save_freq N` also dumps every N env steps, for crashes that send no signal. Off by
-default. A 500k run is ~10 h training + ~3.6 h eval.
+The launchers also pass `--resume_save_freq 100000`, and requeue a job killed with rc=137 (OOM,
+node failure) if it wrote a dump during that job, so a SIGKILL costs at most 100k steps.
+
+Coffee needs `sbatch --mem=64G`: its collection slot keeps all 10 training kitchens resident,
+and RSS grows with every eval pass (a fresh env is built per cell). At 32G all 12 coffee runs
+of 2026-09-22 were OOM-killed during an eval, at 148k–249k steps. Lamp peaks at 16–21G.
+
+A 500k run is ~10 h training + ~3.6 h eval.
 
 Smoke-test the path first (~15 min):
 
