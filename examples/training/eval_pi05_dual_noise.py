@@ -387,7 +387,8 @@ def main() -> None:
     register_third_party_plugins()
     task_spec = TASKS[args.task]
 
-    steps = args.steps if args.steps is not None else available_steps(args.run_dir)
+    # Ascending: wandb silently drops any step lower than the last one logged in a run.
+    steps = sorted(args.steps) if args.steps is not None else available_steps(args.run_dir)
     env_cfg = build_env_cfg(task_spec, checkpoint_dir(args.run_dir, steps[0]), args.cameras)
     cells, bank = build_cells(args, env_cfg)
     labels = [c["label"] for c in cells]
