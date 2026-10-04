@@ -51,6 +51,9 @@ if [ "$OFFLINE" = "1" ]; then
 fi
 export OMP_NUM_THREADS=4
 export TOKENIZERS_PARALLELISM=false
+# Concurrent EGL processes race on the NVIDIA shader cache in $HOME and abort with a bare SIGABRT
+# (see dsrl_drac.sbatch); MuJoCo compiles a handful of shaders, so skip the disk cache.
+export __GL_SHADER_DISK_CACHE=0
 export TORCHINDUCTOR_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID}"
 export NUMBA_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/numba_${SLURM_JOB_ID}"
 export TRITON_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/triton_${SLURM_JOB_ID}"

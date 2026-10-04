@@ -39,7 +39,20 @@ case "$TASK" in
       --prompt "press the button on the coffee machine to serve coffee"
     )
     ;;
-  *) echo "unknown task '$TASK' (lamp|coffee)" >&2; exit 2 ;;
+  coffee_lat)
+    # One kitchen (seed 1, nespresso); the machine slides sideways. Train -4/0 cm, held out -2,
+    # extrap -8/+4 (scripts/build_coffee_shift_bank.py). ~70% of seed-1 starts jam -> 20 retries.
+    BANK=$BANKS/coffeepressbutton_pandadex_s1_lateral/bank.json
+    TASK_ARGS=(
+      --task CoffeePressButton --robot PandaDexLeapRHOmron --fps 20
+      --collect_envs 1 --collect_scene_seeds 1
+      --placement_bank "$BANK"
+      --eval_placement_sets train,heldout,extrap
+      --reject_start_rot_deg 10 --reject_start_pos_cm 3 --reject_start_max_retries 20
+      --prompt "press the button on the coffee machine to serve coffee"
+    )
+    ;;
+  *) echo "unknown task '$TASK' (lamp|coffee|coffee_lat)" >&2; exit 2 ;;
 esac
 
 # The banks are built on Mila; rsync them over before the first run here.

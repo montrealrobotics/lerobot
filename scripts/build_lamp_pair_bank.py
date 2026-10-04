@@ -3,6 +3,8 @@
 
 Takes the two entries from an existing bank, interpolates position and yaw to get the midpoint,
 and runs the same feasibility checks on all three. Training = the pair; held out = the midpoint.
+``--extrapolate`` adds an ``extrap`` group: placements continued past each end of the pair along
+the same position/yaw line, at the given multiples of the pair separation.
 
 Example:
     python scripts/build_lamp_pair_bank.py \\
@@ -26,6 +28,7 @@ import numpy as np
 
 _BUILDER = Path(__file__).resolve().parent / "build_lamp_placement_bank.py"
 _spec = importlib.util.spec_from_file_location("lamp_bank_builder", _BUILDER)
+assert _spec is not None and _spec.loader is not None, f"cannot load {_BUILDER}"
 bb = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bb)
 
@@ -42,6 +45,14 @@ def midpoint(a: dict, b: dict) -> dict:
     return {"pos": pos.tolist(), "quat_wxyz": yaw_to_quat(yaw).tolist(), "yaw_deg": float(yaw)}
 
 
+def along(a: dict, b: dict, t: float) -> dict:
+    """Point at fraction ``t`` of the way from ``a`` to ``b`` in (position, yaw); t<0 or t>1 extrapolates."""
+    pos = np.asarray(a["pos"]) + t * (np.asarray(b["pos"]) - np.asarray(a["pos"]))
+    dyaw = (b["yaw_deg"] - a["yaw_deg"] + 180.0) % 360.0 - 180.0
+    yaw = (a["yaw_deg"] + t * dyaw + 180.0) % 360.0 - 180.0
+    return {"pos": pos.tolist(), "quat_wxyz": yaw_to_quat(yaw).tolist(), "yaw_deg": float(yaw)}
+
+
 def find(scene: dict, entry_id: str) -> dict:
     pool = list(scene["train"]) + list(scene.get("heldout", []))
     ref = scene.get("reference_training_placement")
@@ -51,11 +62,15 @@ def find(scene: dict, entry_id: str) -> dict:
     for e in pool:
         if e.get("id") == entry_id:
             return e
-    raise KeyError(f"{entry_id!r} not in bank scene {scene['scene_seed']}; have {[e.get('id') for e in pool]}")
+    raise KeyError(
+        f"{entry_id!r} not in bank scene {scene['scene_seed']}; have {[e.get('id') for e in pool]}"
+    )
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--source_bank", required=True)
     parser.add_argument("--scene_seed", type=int, default=1)
     parser.add_argument("--pair", required=True, help="Two entry ids, comma-separated")
@@ -65,6 +80,11 @@ def main() -> None:
     parser.add_argument("--out", required=True)
     parser.add_argument("--render_dir", default=None)
     parser.add_argument("--resolution", type=int, default=384)
+    parser.add_argument(
+        "--extrapolate",
+        default="",
+        help="Comma-separated multiples of the pair separation to extend past EACH end, e.g. 0.5,1.0",
+    )
     parser.add_argument("--allow_failed", action="store_true", help="Write the bank even if a check fails")
     args = parser.parse_args()
 
@@ -84,11 +104,16 @@ def main() -> None:
     render = args.render_dir is not None
     scene = bb.LampScene(args.task, args.robot, args.fps, args.scene_seed, render, args.resolution)
 
+    cells = [("s1_start_0", a), ("s1_start_1", b), ("s1_mid", mid)]
+    for f in [float(x) for x in args.extrapolate.split(",") if x.strip()]:
+        cells.append((f"s1_extrap_0_x{f:g}", along(a, b, -f)))
+        cells.append((f"s1_extrap_1_x{f:g}", along(a, b, 1.0 + f)))
+
     entries, failed = [], []
-    for name, e in (("s1_start_0", a), ("s1_start_1", b), ("s1_mid", mid)):
+    for name, e in cells:
         pos, quat = np.asarray(e["pos"]), np.asarray(e["quat_wxyz"])
         reasons, rest, _ = scene.evaluate(pos, quat)
-        print(f"  {name:12s} {reasons or 'PASS'}  {bb._summary(rest)}")
+        print(f"  {name:18s} yaw {e['yaw_deg']:7.1f} {reasons or 'PASS'}  {bb._summary(rest)}")
         entry = {
             "id": name,
             "pos": pos.tolist(),
@@ -106,12 +131,17 @@ def main() -> None:
         scene.env.close()
         raise SystemExit(f"feasibility check failed for {failed}; inspect, then re-run with --allow_failed")
 
-    train, heldout = entries[:2], entries[2:]
+    train, heldout, extrap = entries[:2], entries[2:3], entries[3:]
     ref = scene_src["reference_training_placement"]
     if render:
         bb._render_scene(
-            scene, args.scene_seed, np.asarray(ref["pos"]), np.asarray(ref["quat_wxyz"]),
-            train, heldout, Path(os.path.expanduser(args.render_dir)),
+            scene,
+            args.scene_seed,
+            np.asarray(ref["pos"]),
+            np.asarray(ref["quat_wxyz"]),
+            train,
+            heldout + extrap,
+            Path(os.path.expanduser(args.render_dir)),
         )
     scene.env.close()
 
@@ -136,6 +166,7 @@ def main() -> None:
                 "reference_training_placement": ref,
                 "train": train,
                 "heldout": heldout,
+                **({"extrap": extrap} if extrap else {}),
             }
         ],
     }

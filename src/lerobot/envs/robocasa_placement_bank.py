@@ -21,13 +21,14 @@ import numpy as np
 
 def load_placement_bank(path: str | os.PathLike) -> dict[str, Any]:
     bank = json.loads(Path(os.path.expanduser(str(path))).read_text())
-    bank.setdefault("object_name", "lamp")  # banks written before the field existed are lamp banks
+    # Banks written before the field existed are lamp banks; fixture-shift banks move no object.
+    bank.setdefault("object_name", None if bank.get("bank_type") == "fixture_shift" else "lamp")
     bank["_scenes_by_seed"] = {int(s["scene_seed"]): s for s in bank["scenes"]}
     return bank
 
 
 def scene_entries(bank: dict[str, Any], scene_seed: int, group: str) -> list[dict[str, Any]]:
-    """Entries of one scene for ``group`` in {"train", "heldout", "reference"}."""
+    """Entries of one scene for ``group`` in {"train", "heldout", "extrap", "reference"}."""
     try:
         scene = bank["_scenes_by_seed"][scene_seed]
     except KeyError as err:
@@ -39,12 +40,12 @@ def scene_entries(bank: dict[str, Any], scene_seed: int, group: str) -> list[dic
         ref = dict(scene["reference_training_placement"])
         ref.setdefault("id", f"s{scene_seed}_reference")
         return [ref]
-    return list(scene[group])
+    return list(scene.get(group, []))
 
 
 def find_entry(bank: dict[str, Any], scene_seed: int, entry_id: str) -> dict[str, Any]:
     """The entry with ``id == entry_id`` in one scene, searched over train/heldout/reference."""
-    groups = ("train", "heldout", "reference")
+    groups = ("train", "heldout", "extrap", "reference")
     for group in groups:
         for entry in scene_entries(bank, scene_seed, group):
             if entry.get("id") == entry_id:
@@ -99,15 +100,17 @@ def kitchen_eval_cells(bank: dict, spec: str) -> list[dict]:
 
 
 def placement_eval_cells(bank: dict, spec: str, scene_seeds: list[int]) -> list[dict]:
-    """One cell per (kitchen, entry). ``spec`` groups: ``heldout``, ``reference`` (the original
-    fixed placement every pre-bank DSRL run trained on, itself held out of the bank), ``train`` /
-    ``train:N``.
+    """One cell per (kitchen, entry). ``spec`` groups: ``heldout``, ``extrap`` (held-out placements
+    outside the training placements' span), ``reference`` (the original fixed placement every
+    pre-bank DSRL run trained on, itself held out of the bank), ``train`` / ``train:N``.
     """
     cells = []
     for token in [t.strip() for t in spec.split(",") if t.strip()]:
         group, _, limit = token.partition(":")
-        if group not in ("heldout", "reference", "train"):
-            raise ValueError(f"--eval_placement_sets: unknown group {group!r} (heldout|reference|train[:N])")
+        if group not in ("heldout", "extrap", "reference", "train"):
+            raise ValueError(
+                f"--eval_placement_sets: unknown group {group!r} (heldout|extrap|reference|train[:N])"
+            )
         for seed in scene_seeds:
             entries = scene_entries(bank, seed, group)
             if limit:
@@ -132,6 +135,10 @@ class PlacementBankWrapper(gym.Wrapper):
     ``shuffle`` reshuffles the entries each pass rather than cycling in a fixed order.
     ``check_tol_m`` raises if the object comes to rest farther than this (xy) from the requested
     pose, i.e. the placement did not take or it slid.
+
+    A bank with ``bank_type: "fixture_shift"`` (``scripts/build_coffee_shift_bank.py``) moves a
+    fixture instead: each entry is a ``shift_m`` / ``lateral_m`` offset, applied through
+    ``FixtureShiftWrapper``.
     """
 
     def __init__(
@@ -144,6 +151,11 @@ class PlacementBankWrapper(gym.Wrapper):
         seed: int = 0,
         check_tol_m: float = 0.03,
     ):
+        self.fixture_shift = bank.get("bank_type") == "fixture_shift"
+        if self.fixture_shift:
+            env = FixtureShiftWrapper(
+                env, fixture_attr=bank["fixture_attr"], carried_objects=tuple(bank["carried_objects"])
+            )
         super().__init__(env)
         if not entries:
             raise ValueError("PlacementBankWrapper needs at least one entry")
@@ -165,7 +177,7 @@ class PlacementBankWrapper(gym.Wrapper):
                 f"Env built with seed {scene_seed} is kitchen L{got[0]}S{got[1]}, but the bank was "
                 f"built for L{want[0]}S{want[1]}. The seed->kitchen mapping changed; rebuild the bank."
             )
-        if self.object_name not in inner.object_placements:
+        if not self.fixture_shift and self.object_name not in inner.object_placements:
             raise KeyError(
                 f"Object {self.object_name!r} not in env.object_placements: {list(inner.object_placements)}"
             )
@@ -178,10 +190,15 @@ class PlacementBankWrapper(gym.Wrapper):
 
     def reset(self, **kwargs):
         entry = self._next_entry()
+        self.current = entry
+        if self.fixture_shift:
+            self.env.shift_m = float(entry["shift_m"])
+            self.env.lateral_m = float(entry["lateral_m"])
+            return self.env.reset(**kwargs)
+
         inner = _robocasa_inner(self.env)
         obj = inner.object_placements[self.object_name][2]
         inner.object_placements[self.object_name] = (tuple(entry["pos"]), tuple(entry["quat_wxyz"]), obj)
-        self.current = entry
 
         obs, info = self.env.reset(**kwargs)
 
@@ -317,3 +334,53 @@ class StartPoseRejectionWrapper(gym.Wrapper):
             f"{self.max_retries + 1} resets (last: {pos_dev * 100:.1f} cm, {rot_dev:.1f} deg); using it anyway"
         )
         return obs, info
+
+
+class FixtureShiftWrapper(gym.Wrapper):
+    """Slide a counter fixture toward the robot, carrying the objects placed on it.
+
+    Fixtures are welded to the world, so a placement bank cannot move them; this shifts the
+    fixture's body in the compiled model instead and offsets the carried objects' cached
+    placements by the same vector before every reset. Positive ``shift_m`` moves the fixture
+    along the robot base's -x axis (toward the robot); positive ``lateral_m`` moves it along the
+    base's +y axis (the robot's left). The robot, the start pose and the rest of the kitchen are
+    untouched.
+
+    Wrap *outside* ``StartPoseRejectionWrapper`` so its retries keep the same shift.
+    """
+
+    def __init__(
+        self,
+        env: gym.Env,
+        shift_m: float = 0.0,
+        lateral_m: float = 0.0,
+        fixture_attr: str = "coffee_machine",
+        carried_objects: tuple[str, ...] = ("obj",),
+    ):
+        super().__init__(env)
+        inner = _robocasa_inner(env)
+        model, data = inner.sim.model._model, inner.sim.data._data
+        self.fixture = getattr(inner, fixture_attr)
+        self._body = model.body(self.fixture.root_body).id
+        if model.body_parentid[self._body] != 0 or model.body_jntnum[self._body] != 0:
+            raise ValueError(f"{self.fixture.root_body} is not a body welded to the world")
+        self._body_pos0 = model.body_pos[self._body].copy()
+        self._placements0 = {name: inner.object_placements[name] for name in carried_objects}
+        base = model.body("robot0_base").id
+        axes = data.xmat[base].reshape(3, 3)[:, :2].copy()
+        axes[2] = 0.0
+        self._forward, self._left = (axes / np.linalg.norm(axes, axis=0)).T
+        self.shift_m = shift_m
+        self.lateral_m = lateral_m
+
+    def offset(self) -> np.ndarray:
+        """World-frame displacement applied at the current ``shift_m`` / ``lateral_m``."""
+        return -self.shift_m * self._forward + self.lateral_m * self._left
+
+    def reset(self, **kwargs):
+        inner = _robocasa_inner(self.env)
+        off = self.offset()
+        inner.sim.model._model.body_pos[self._body] = self._body_pos0 + off
+        for name, (pos, quat, obj) in self._placements0.items():
+            inner.object_placements[name] = (tuple(np.asarray(pos) + off), quat, obj)
+        return self.env.reset(**kwargs)

@@ -6,7 +6,7 @@
 #
 # Extra args pass through to eval_pi05_dual_noise.py, e.g. --steps 16000 20000,
 # --episodes-per-cell 25, --no-wandb.
-#SBATCH --partition main
+#SBATCH --partition long
 #SBATCH --gres=gpu:l40s:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
@@ -19,7 +19,7 @@ RUN_DIR=${1:?usage: sbatch dual_noise_eval.sbatch <run-dir> <task> [extra args..
 TASK=${2:?usage: sbatch dual_noise_eval.sbatch <run-dir> <task> [extra args...]}
 shift 2
 
-REPO=/home/mila/a/artur.kuramshin/lerobot
+REPO=${LEROBOT_REPO:-/home/mila/a/artur.kuramshin/lerobot}   # override per user: sbatch --export=ALL,LEROBOT_REPO=...
 cd "$REPO"
 
 source ~/.bashrc          # HF_HOME / HF_TOKEN live here on Mila

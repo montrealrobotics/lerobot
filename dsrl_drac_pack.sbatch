@@ -220,7 +220,14 @@ run_one () {
     # `|| true`: under set -e a failed kill (child already gone, e.g. TERM during the retry
     # pause) would otherwise exit the subshell from inside the trap with rc=1.
     trap 'termed=1; if [ -n "$child" ]; then kill -TERM "$child" 2>/dev/null || true; fi' TERM
-    : > "$out/run.log"
+    # Fresh run: start a clean log. Resumed run (wall-clock requeue, preemption): APPEND, or the
+    # eval history of every earlier segment is lost from run.log (wandb keeps one offline run
+    # per segment, but run.log is what the results export parses).
+    if [ -f "$out/resume_state.pt" ]; then
+        echo "=== resumed $(date) job=${SLURM_JOB_ID:-none} ===" >> "$out/run.log"
+    else
+        : > "$out/run.log"
+    fi
     while :; do
         t0=$SECONDS
         "$@" >> "$out/run.log" 2>&1 &

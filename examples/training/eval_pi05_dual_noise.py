@@ -169,8 +169,7 @@ def checkpoint_dir(run_dir: Path, step: int) -> Path:
     matches = [d for d in numbered if int(d.name) == step]
     if not matches:
         raise FileNotFoundError(
-            f"No checkpoint for step {step} in {checkpoints}. "
-            f"Available: {sorted(d.name for d in numbered)}"
+            f"No checkpoint for step {step} in {checkpoints}. Available: {sorted(d.name for d in numbered)}"
         )
     return matches[0] / PRETRAINED_MODEL_DIR
 
@@ -245,6 +244,7 @@ def evaluate_step(
     seed: int,
     videos_dir: Path | None,
     n_videos: int,
+    modes: tuple[str, ...] = NOISE_MODES,
 ) -> dict[str, dict[str, float]]:
     """Score ONE checkpoint under both noise modes on the cell envs, reused across checkpoints."""
     policy_cfg = PreTrainedConfig.from_pretrained(pretrained_dir)
@@ -263,7 +263,7 @@ def evaluate_step(
     labels = [c["label"] for c in cells]
     results: dict[str, dict[str, float]] = {}
     try:
-        for mode in NOISE_MODES:
+        for mode in modes:
             # Same seed per mode, so the modes differ only in the noise parameterisation.
             set_seed(seed)
             noise_ctx = nullcontext(policy) if mode == "iid" else duplicated_noise(policy)
@@ -316,7 +316,9 @@ def _fps_from_train_config(pretrained_dir: Path) -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--run-dir", type=Path, required=True, help="A training run's output_dir.")
     parser.add_argument("--task", choices=tuple(TASKS), required=True)
     parser.add_argument(
@@ -337,6 +339,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-project", default="lerobot-dex-eval")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--no-wandb", action="store_true")
+    parser.add_argument(
+        "--results-name",
+        default=RESULTS_FILENAME,
+        help="Results file under --run-dir. Change it when scoring non-DSRL cells, so the DSRL-cell "
+        "results are not overwritten.",
+    )
     args = parser.parse_args()
 
     defaults = DSRL_EVAL[args.task]
@@ -403,10 +411,16 @@ def main() -> None:
     )
     logging.info(
         "Scoring %d checkpoints %s on %d cells %s x %d episodes | cameras %s | rejection %s",
-        len(steps), steps, len(cells), labels, args.episodes_per_cell, args.cameras, rejection,
+        len(steps),
+        steps,
+        len(cells),
+        labels,
+        args.episodes_per_cell,
+        args.cameras,
+        rejection,
     )
 
-    out_path = args.run_dir / RESULTS_FILENAME
+    out_path = args.run_dir / args.results_name
     results = json.loads(out_path.read_text()) if out_path.exists() else {}
     run = init_wandb(args, task_spec, steps, labels)
 
@@ -415,7 +429,11 @@ def main() -> None:
     try:
         for step in steps:
             pretrained_dir = checkpoint_dir(args.run_dir, step)
-            videos_dir = None if args.no_videos else args.run_dir / "eval_dual_noise_dsrl_cells" / f"step_{step:07d}"
+            videos_dir = (
+                None
+                if args.no_videos
+                else args.run_dir / f"eval_{Path(args.results_name).stem}" / f"step_{step:07d}"
+            )
             row = evaluate_step(
                 pretrained_dir=pretrained_dir,
                 env_cfg=env_cfg,

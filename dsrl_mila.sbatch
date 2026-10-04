@@ -19,13 +19,13 @@
 
 set -euo pipefail
 
-TASK=${1:?usage: sbatch dsrl_mila.sbatch <lamp|coffee> <policy_path> <seed> [extra args...]}
-POLICY=${2:?usage: sbatch dsrl_mila.sbatch <lamp|coffee> <policy_path> <seed> [extra args...]}
-SEED=${3:?usage: sbatch dsrl_mila.sbatch <lamp|coffee> <policy_path> <seed> [extra args...]}
+TASK=${1:?usage: sbatch dsrl_mila.sbatch <lamp|coffee|coffee_lat> <policy_path> <seed> [extra args...]}
+POLICY=${2:?usage: sbatch dsrl_mila.sbatch <lamp|coffee|coffee_lat> <policy_path> <seed> [extra args...]}
+SEED=${3:?usage: sbatch dsrl_mila.sbatch <lamp|coffee|coffee_lat> <policy_path> <seed> [extra args...]}
 shift 3
 
-REPO=/home/mila/a/artur.kuramshin/lerobot
-SCRATCH=/network/scratch/a/artur.kuramshin
+REPO=${LEROBOT_REPO:-/home/mila/a/artur.kuramshin/lerobot}   # override per user: sbatch --export=ALL,LEROBOT_REPO=...
+SCRATCH=${LEROBOT_SCRATCH:-/network/scratch/a/artur.kuramshin}
 BANKS=$SCRATCH/lerobot/placement_banks
 cd "$REPO"
 
@@ -45,11 +45,13 @@ mkdir -p "$NUMBA_CACHE_DIR" "$SCRATCH/lerobot/slurm_logs"
 # controller silently falls back to OSC_POSE and every rollout is garbage. --prompt is the
 # dataset's task string, used only if the env exposes no ep_meta['lang'] (the script's own
 # default is a coffee string, wrong for both tasks).
+# Controller configs from whichever robosuite the venv imports (the checkout path differs per user).
+ROBOSUITE_CONTROLLERS=$(python -c 'import os, robosuite; print(os.path.join(os.path.dirname(robosuite.__file__), "controllers/config/robots"))')
 case "$TASK" in
   lamp)
     TASK_ARGS=(
       --task ScrewLightbulb --robot XArm6DexLeapRHOmron --fps 30
-      --controller "$HOME/robosuite/robosuite/controllers/config/robots/default_xarm6dexleaprhomron_joint_pos.json"
+      --controller "$ROBOSUITE_CONTROLLERS/default_xarm6dexleaprhomron_joint_pos.json"
       --collect_envs 1 --collect_scene_seeds 1
       --placement_bank "$BANKS/screwlightbulb_xarm6_seed1_pair/bank.json"
       --eval_placement_sets train,heldout
@@ -66,7 +68,19 @@ case "$TASK" in
       --prompt "press the button on the coffee machine to serve coffee"
     )
     ;;
-  *) echo "unknown task '$TASK' (lamp|coffee)" >&2; exit 2 ;;
+  coffee_lat)
+    # One kitchen (seed 1, nespresso); the machine slides sideways. Train -4/0 cm, held out -2,
+    # extrap -8/+4 (scripts/build_coffee_shift_bank.py). ~70% of seed-1 starts jam -> 20 retries.
+    TASK_ARGS=(
+      --task CoffeePressButton --robot PandaDexLeapRHOmron --fps 20
+      --collect_envs 1 --collect_scene_seeds 1
+      --placement_bank "$BANKS/coffeepressbutton_pandadex_s1_lateral/bank.json"
+      --eval_placement_sets train,heldout,extrap
+      --reject_start_rot_deg 10 --reject_start_pos_cm 3 --reject_start_max_retries 20
+      --prompt "press the button on the coffee machine to serve coffee"
+    )
+    ;;
+  *) echo "unknown task '$TASK' (lamp|coffee|coffee_lat)" >&2; exit 2 ;;
 esac
 
 OUT=$SCRATCH/lerobot/outputs/dsrl/${SLURM_JOB_NAME:-dsrl_${TASK}}/seed${SEED}
