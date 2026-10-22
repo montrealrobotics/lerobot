@@ -907,6 +907,10 @@ def _run_eval_only(args, eval_fn, dsrl_cfg: DSRLConfig, device: torch.device, en
 
 
 def main():
+    import lerobot
+
+    # Every checkout shares one editable install; log which source tree is actually running.
+    print(f"lerobot imported from {os.path.dirname(lerobot.__file__)}")
     parser = argparse.ArgumentParser(description="DSRL over frozen pi05 on RoboCasa")
     parser.add_argument(
         "--policy_path", type=str, required=True, help="Path to the RoboCasa-finetuned pi05 checkpoint"
@@ -1036,6 +1040,27 @@ def main():
         default=0,
         help="Also write the resume state every N env steps. 0 = on signal only.",
     )
+    # Continual DSRL: start the noise actor from another run's saved actor (all default off).
+    parser.add_argument(
+        "--init_actor_from",
+        type=str,
+        default=None,
+        help="Saved noise-actor dir (step_*/ or final/) to initialise the actor from; critics, temperature, "
+        "optimizers and replay buffer start fresh. Ignored when resuming.",
+    )
+    parser.add_argument(
+        "--init_state_cols",
+        choices=["hand", "reinit", "copy"],
+        default="hand",
+        help="If the source robot's state size differs: hand = copy the last --init_state_hand_dims columns of "
+        "the first state-projection layer and re-init the arm columns; reinit = re-init that layer; copy = "
+        "require identical shapes.",
+    )
+    parser.add_argument("--init_state_hand_dims", type=int, default=16, help="Hand joints at the end of the state")
+    parser.add_argument(
+        "--actor_update_delay", type=int, default=0, help="Critic-only SAC updates for the first N training steps"
+    )
+    parser.add_argument("--eval_at_start", action="store_true", help="Also evaluate the actor at env step 0")
     # WandB
     parser.add_argument("--wandb_enable", action="store_true")
     parser.add_argument("--wandb_project", type=str, default="lerobot-dsrl")
@@ -1417,6 +1442,11 @@ def main():
         wandb_kwargs=wandb_kwargs,
         eval_fn=eval_fn,
         resume=args.resume,
+        init_actor_path=args.init_actor_from,
+        init_state_cols=args.init_state_cols,
+        init_state_hand_dims=args.init_state_hand_dims,
+        actor_update_delay=args.actor_update_delay,
+        eval_at_start=args.eval_at_start,
     )
 
     env.close()

@@ -242,7 +242,8 @@ class SACAlgorithm(RLAlgorithm):
             stats.losses["loss_discrete_critic"] = loss_dc.item()
             stats.grad_norms["discrete_critic"] = dc_grad
 
-        if self._optimization_step % self.config.policy_update_freq == 0:
+        # skip_actor_update: set by a caller that wants critic-only steps (DSRL actor_update_delay).
+        if not getattr(self, "skip_actor_update", False) and self._optimization_step % self.config.policy_update_freq == 0:
             for _ in range(self.config.policy_update_freq):
                 loss_actor = self._compute_loss_actor(fb)
                 self.optimizers["actor"].zero_grad()
