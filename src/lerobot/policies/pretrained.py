@@ -33,6 +33,7 @@ from lerobot.configs import PreTrainedConfig
 from lerobot.configs.train import TrainPipelineConfig
 from lerobot.utils.hub import HubMixin
 
+from .chunk import ChunkPolicySpec, ExecutionMode, FeatureSpec
 from .utils import log_model_loading_keys
 
 T = TypeVar("T", bound="PreTrainedPolicy")
@@ -40,6 +41,14 @@ T = TypeVar("T", bound="PreTrainedPolicy")
 
 class ActionSelectKwargs(TypedDict, total=False):
     noise: Tensor | None
+
+
+class RTCActionSelectKwargs(TypedDict, total=False):
+    """Keyword arguments Real-Time Chunking passes to `predict_action_chunk`."""
+
+    inference_delay: int | None
+    prev_chunk_left_over: Tensor | None
+    execution_horizon: int | None
 
 
 class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
@@ -429,3 +438,58 @@ class PreTrainedPolicy(nn.Module, HubMixin, abc.ABC):
                 config_dict[key] = value
 
         return peft_config_cls(**config_dict)
+
+    def supports_rtc(self) -> bool:
+        """Whether this policy implements Real-Time Chunking inference semantics."""
+        return False
+
+    def chunk_inference_spec(self) -> ChunkPolicySpec:
+        """Declare the default current-observation chunk-serving author contract.
+
+        Inheriting this implementation declares that ``predict_action_chunk`` does
+        every preparation needed by direct callers, accepts the complete current
+        observation, and returns ``[B, chunk_size, A]`` in model coordinates. Its
+        canonical processor pair must support whole chunks. ``n_action_steps`` is
+        the ordinary playback slice; RTC retains the full prediction horizon.
+
+        A policy requiring select_action-only preparation, other action layouts,
+        or temporal sampling must override this method and reject unsupported
+        configurations or provide a custom runner. Method presence or a successful
+        warmup is not evidence for this contract. Policy/processor state is allowed
+        only within an exclusive session and reset() must clear it for a new run.
+        """
+        config = self.config
+        if config.n_obs_steps != 1:
+            raise ValueError("Chunk inference requires n_obs_steps=1; observation history is unsupported.")
+        for field_name in (
+            "observation_delta_indices",
+            "image_observation_delta_indices",
+            "state_observation_delta_indices",
+        ):
+            indices = getattr(config, field_name, None)
+            if indices is not None and list(indices) != [0]:
+                raise ValueError(f"Chunk inference cannot sample temporal history ({field_name}).")
+        if getattr(config, "temporal_ensemble_coeff", None) is not None:
+            raise ValueError("Chunk inference does not support temporal ensembling.")
+        if getattr(config, "use_visual_memory", False) or getattr(config, "use_proprioceptive_memory", False):
+            raise ValueError(
+                "Chunk inference cannot sample observation memory at the required control cadence."
+            )
+        prediction_steps = getattr(config, "chunk_size", None)
+        if not isinstance(prediction_steps, int) or prediction_steps <= 0:
+            raise ValueError(
+                "The default chunk runner requires a positive chunk_size; provide a custom runner."
+            )
+        execution_steps = getattr(config, "n_action_steps", prediction_steps)
+        modes = [ExecutionMode.CHUNK]
+        training_max_delay = int(getattr(config, "rtc_training_max_delay", 0))
+        if self.supports_rtc():
+            modes.append(ExecutionMode.RTC_GUIDED)
+            if training_max_delay > 0:
+                modes.append(ExecutionMode.RTC_TRAINED)
+        return ChunkPolicySpec(
+            prediction_steps=prediction_steps,
+            execution_steps=execution_steps,
+            modes=tuple(modes),
+            training_max_delay=training_max_delay,
+        )

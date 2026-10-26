@@ -42,6 +42,7 @@ from .delta_action_processor import MapDeltaActionToRobotActionStep, MapTensorTo
 from .device_processor import DeviceProcessorStep
 from .env_processor import IsaaclabArenaProcessorStep, LiberoProcessorStep
 from .factory import (
+    load_pretrained_policy_processors,
     make_default_processors,
     make_default_robot_action_processor,
     make_default_robot_observation_processor,
@@ -102,6 +103,7 @@ from .rename_processor import RenameObservationsProcessorStep, rename_stats
 from .tokenizer_processor import ActionTokenizerProcessorStep, TokenizerProcessorStep
 
 __all__ = [
+    "load_pretrained_policy_processors",
     "ActionProcessorStep",
     "AddTeleopActionAsComplimentaryDataStep",
     "AddTeleopEventsAsInfoStep",

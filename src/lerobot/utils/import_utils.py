@@ -102,6 +102,7 @@ def require_package(pkg_name: str, extra: str, import_name: str | None = None) -
 
 # ML / training
 _transformers_available = is_package_available("transformers")
+_datasets_available = is_package_available("datasets")
 _peft_available = is_package_available("peft")
 _scipy_available = is_package_available("scipy")
 _diffusers_available = is_package_available("diffusers")
