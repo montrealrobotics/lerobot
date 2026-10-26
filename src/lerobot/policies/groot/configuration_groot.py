@@ -338,6 +338,20 @@ class GrootConfig(PreTrainedConfig):
     # keep the gripper absolute, matching the Isaac-GR00T single-arm + absolute-gripper convention.
     relative_exclude_joints: list[str] = field(default_factory=list)
 
+    # New-embodiment normalization/augmentation overrides (SFT-arms study, parity with the pi05 matrix).
+    # They apply only when the checkpoint carries no statistics for `embodiment_tag`, i.e. when
+    # fine-tuning the base model on a new embodiment, and are baked into the saved processor files.
+    #   normalization_bounds: "minmax" (GR00T default) or "quantile", which normalizes state and
+    #     action with the dataset's q01/q99 as the bounds -- pi05's QUANTILES mode.
+    #   clip_normalized: clamp normalized inputs and decoded actions to [-1, 1]. None keeps GR00T's
+    #     default (clip). Quantile bounds put ~2% of values outside [-1, 1], which pi05 does not clip.
+    #   state_dropout_prob: per-sample probability of zeroing the state during training. None keeps
+    #     GR00T's new-embodiment default (0). Setting it also marks a freshly built pipeline as a
+    #     training pipeline, which lerobot_train otherwise never does (it passes no dataset_meta).
+    normalization_bounds: str = "minmax"
+    clip_normalized: bool | None = None
+    state_dropout_prob: float | None = None
+
     # Training parameters
     optimizer_lr: float = 1e-4
     # Isaac-GR00T N1.7 fine-tunes with AdamW betas (0.9, 0.999).
@@ -380,6 +394,8 @@ class GrootConfig(PreTrainedConfig):
     resume: bool = False
 
     def __post_init__(self):
+        if self.normalization_bounds not in ("minmax", "quantile"):
+            raise ValueError(f"normalization_bounds must be 'minmax' or 'quantile', got {self.normalization_bounds!r}")
         if self.model_params_fp32 is not None:
             warnings.warn(
                 "`model_params_fp32` is deprecated; use `--policy.dtype` instead.",

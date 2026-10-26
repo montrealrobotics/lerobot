@@ -1085,6 +1085,27 @@ def _build_n1_7_relative_action_processor_assets(
     )
 
 
+
+def _quantile_bounds_as_min_max(stats: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """State/action stats with `min`/`max` replaced by `q01`/`q99` (pi05's QUANTILES bounds).
+
+    GR00T normalizes with min/max; feeding it the 1st/99th percentiles as min/max makes that
+    normalization identical to LeRobot's QUANTILES mode. Other keys (images) pass through.
+    """
+    out = dict(stats)
+    for key in (OBS_STATE, ACTION):
+        entry = stats.get(key)
+        if not isinstance(entry, dict):
+            continue
+        if "q01" not in entry or "q99" not in entry:
+            raise ValueError(
+                f"normalization_bounds='quantile' needs q01/q99 statistics for '{key}'; the dataset "
+                "stats have only " + ", ".join(sorted(entry))
+            )
+        out[key] = {**entry, "min": entry["q01"], "max": entry["q99"]}
+    return out
+
+
 def make_groot_pre_post_processors(
     config: GrootConfig,
     dataset_stats: dict[str, dict[str, torch.Tensor]] | None = None,
@@ -1154,6 +1175,9 @@ def make_groot_pre_post_processors(
         else action_horizon
     )
     padded_stats = checkpoint_stats if checkpoint_has_stats else (dataset_stats or {})
+    new_embodiment_overrides = not checkpoint_has_stats
+    if new_embodiment_overrides and config.normalization_bounds == "quantile":
+        padded_stats = _quantile_bounds_as_min_max(padded_stats)
     embodiment_mapping = (
         checkpoint_assets.embodiment_mapping
         if checkpoint_assets is not None
@@ -1279,6 +1303,15 @@ def make_groot_pre_post_processors(
             pack_step=pack_step,
             action_decode_transform=config.action_decode_transform,
         )
+
+    if new_embodiment_overrides:
+        if config.state_dropout_prob is not None:
+            pack_step.state_dropout_prob = float(config.state_dropout_prob)
+            pack_step.training = True
+        if config.clip_normalized is not None:
+            pack_step.clip_outliers = bool(config.clip_normalized)
+            if isinstance(action_decode_step, GrootActionUnpackUnnormalizeStep):
+                action_decode_step.clip_normalized_action = bool(config.clip_normalized)
 
     output_steps: list[ProcessorStep] = [action_decode_step]
     if relative_step is not None:
