@@ -76,6 +76,9 @@ from lerobot.utils.constants import (
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 
+# Registers "pi05_random_external_camera_processor_step", which saved GR00T pipelines may name.
+from lerobot.policies.pi05.processor_pi05 import Pi05RandomExternalCameraProcessorStep  # noqa: E402
+
 from .configuration_groot import (
     GROOT_ACTION_DECODE_TRANSFORM_LIBERO,
     GROOT_N1_5_REMOVAL_GUIDANCE,
@@ -1236,8 +1239,18 @@ def make_groot_pre_post_processors(
             "GR00T processors require `config.device`; `PreTrainedConfig.__post_init__` resolves it."
         )
 
+    camera_steps: list[ProcessorStep] = []
+    if config.random_external_camera_keys and config.random_external_camera_output_key:
+        camera_steps.append(
+            Pi05RandomExternalCameraProcessorStep(
+                camera_keys=list(config.random_external_camera_keys),
+                output_key=config.random_external_camera_output_key,
+                p_first_camera=config.random_external_camera_p,
+            )
+        )
     input_steps: list[ProcessorStep] = [
         RenameObservationsProcessorStep(rename_map={}),
+        *camera_steps,
         AddBatchDimensionProcessorStep(),
         pack_step,
         GrootN17VLMEncodeStep(
@@ -1304,6 +1317,11 @@ def make_groot_pre_post_processors(
             action_decode_transform=config.action_decode_transform,
         )
 
+    if pack_step.video_modality_keys is None and config.image_features:
+        # Without checkpoint video keys the pack step would use EVERY observation.images.* key it
+        # is handed, sorted -- all dataset cameras in training, all env cameras in eval -- instead
+        # of the configured inputs. Pin the views to the configured visual features (same order).
+        pack_step.video_modality_keys = sorted(k.removeprefix(f"{OBS_IMAGES}.") for k in config.image_features)
     if new_embodiment_overrides:
         if config.state_dropout_prob is not None:
             pack_step.state_dropout_prob = float(config.state_dropout_prob)

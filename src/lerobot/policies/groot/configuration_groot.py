@@ -20,6 +20,7 @@ import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import draccus
 import torch
 
 from lerobot.configs import FeatureType, NormalizationMode, PolicyFeature, PreTrainedConfig
@@ -27,6 +28,22 @@ from lerobot.optim import AdamWConfig, DiffuserSchedulerConfig
 from lerobot.utils.constants import ACTION, OBS_STATE
 
 from .utils import read_json
+
+
+# GrootConfig.dtype holds a torch.dtype. Upstream lerobot registers this codec on PreTrainedConfig;
+# this fork's base config predates it (pi05 keeps dtype as a string), so register it here, where
+# every GR00T config is built or parsed. Without it, saving a GR00T checkpoint's config.json fails.
+@draccus.decode.register(torch.dtype)
+def _decode_torch_dtype(value, path=()) -> torch.dtype:
+    dtype = getattr(torch, str(value).removeprefix("torch."), None)
+    if not isinstance(dtype, torch.dtype):
+        raise ValueError(f"Invalid dtype {value!r}: expected a torch dtype name.")
+    return dtype
+
+
+@draccus.encode.register(torch.dtype)
+def _encode_torch_dtype(value: torch.dtype, declared_type=None) -> str:
+    return str(value).removeprefix("torch.")
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +368,12 @@ class GrootConfig(PreTrainedConfig):
     normalization_bounds: str = "minmax"
     clip_normalized: bool | None = None
     state_dropout_prob: float | None = None
+    # pi05's random external-camera augmentation, same semantics (pi05_random_external_camera step):
+    # one of `random_external_camera_keys` is chosen per sample and written to
+    # `random_external_camera_output_key` before packing. Empty = off.
+    random_external_camera_keys: list[str] = field(default_factory=list)
+    random_external_camera_output_key: str | None = None
+    random_external_camera_p: float = 0.5
 
     # Training parameters
     optimizer_lr: float = 1e-4

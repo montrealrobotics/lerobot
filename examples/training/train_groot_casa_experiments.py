@@ -61,6 +61,7 @@ from train_pi05_casa_experiments import (  # noqa: E402
     EXTERNAL_IMAGE_KEY,
     GRAD_CLIP_NORM,
     LEAP_HAND_DIMS,
+    RANDOM_EXTERNAL_IMAGE_KEYS,
     LORA_ALPHA,
     LORA_LR_MULT,
     LORA_RANK,
@@ -294,6 +295,10 @@ def make_config(
         normalization_bounds="quantile",
         clip_normalized=False,
         state_dropout_prob=state_dropout_p,
+        # pi05's augmentation: per sample, the external view is the left or right agent-view camera.
+        random_external_camera_keys=list(RANDOM_EXTERNAL_IMAGE_KEYS),
+        random_external_camera_output_key=EXTERNAL_IMAGE_KEY,
+        random_external_camera_p=0.5,
     )
 
     cfg = TrainPipelineConfig(
@@ -342,18 +347,6 @@ def make_config(
     return cfg
 
 
-def _allow_peft_from_base_model() -> None:
-    """GR00T fine-tunes from `base_model_path`, not `pretrained_path`, so the generic PEFT guard
-    ("training from scratch with PEFT") would refuse it. The weights ARE pretrained."""
-    from lerobot.policies.groot.modeling_groot import GrootPolicy
-
-    def _validate(self, peft_config) -> None:
-        if not self.config.base_model_path:
-            raise ValueError("GR00T PEFT needs config.base_model_path (the pretrained base model).")
-
-    GrootPolicy._validate_peft_config = _validate
-
-
 # ----------------------------------------------------------------------------
 # Dry run: build policy, PEFT wrapper, optimizer and processors exactly as lerobot_train does,
 # then assert the arm's trainable set, its optimizer groups and the processor overrides.
@@ -384,7 +377,6 @@ def run_dry_run(cfg: TrainPipelineConfig, spec: GrootArmSpec) -> dict:
     ds_meta = LeRobotDatasetMetadata(cfg.dataset.repo_id, root=cfg.dataset.root)
     policy = make_policy(cfg=cfg.policy, ds_meta=ds_meta, rename_map=cfg.rename_map)
     if cfg.peft is not None:
-        _allow_peft_from_base_model()
         policy = policy.wrap_with_peft(peft_cli_overrides=asdict(cfg.peft))
 
     named = dict(policy.named_parameters())

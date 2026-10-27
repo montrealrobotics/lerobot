@@ -289,6 +289,16 @@ class GrootPolicy(PreTrainedPolicy):
         policy.eval()
         return policy
 
+    def _validate_peft_config(self, peft_config) -> None:
+        """GR00T fine-tunes from `base_model_path`, not `pretrained_path`, so the generic guard
+        ("PEFT from scratch") would refuse it although the weights are pretrained. Record the base
+        model as `name_or_path` too: PEFT writes it into the adapter config as
+        `base_model_name_or_path`, which `make_policy` needs to rebuild the base before loading the
+        adapter (it would otherwise be empty and the checkpoint unloadable)."""
+        if not self.config.base_model_path:
+            raise ValueError("GR00T PEFT fine-tuning needs config.base_model_path (the pretrained base model).")
+        self.name_or_path = str(self.config.pretrained_path or self.config.base_model_path)
+
     def get_optim_params(self) -> list[dict[str, Any]]:
         """Isaac-GR00T excludes biases and normalization parameters from weight decay."""
         return self._build_weight_decay_parameter_groups(self)
