@@ -11,6 +11,24 @@ set -euo pipefail
 GROOT_REPO=/home/mila/a/artur.kuramshin/lerobot-groot
 GROOT_VENV=/network/scratch/a/artur.kuramshin/venvs/lerobot-groot
 
+# Inside a Slurm job, run from a copy of the venv on the node's local disk. Importing the stack from
+# the BeeGFS scratch copy fails intermittently with FileNotFoundError when several processes import
+# at once (the coffee eval's env workers each re-import everything): seen twice in a row, 2026-10-27.
+# GROOT_LOCAL_VENV=0 disables. The copy is made once per job (flock) and reused by every call.
+if [ -n "${SLURM_TMPDIR:-}" ] && [ "${GROOT_LOCAL_VENV:-1}" = "1" ]; then
+    LOCAL_VENV="$SLURM_TMPDIR/venv-lerobot-groot"
+    (
+        flock 9
+        if [ ! -f "$LOCAL_VENV/.copied" ]; then
+            t0=$SECONDS
+            rsync -a --delete "$GROOT_VENV/" "$LOCAL_VENV/"
+            touch "$LOCAL_VENV/.copied"
+            echo "[groot_env] copied venv to $LOCAL_VENV in $((SECONDS - t0)) s" >&2
+        fi
+    ) 9>"$SLURM_TMPDIR/.venv-lerobot-groot.lock"
+    GROOT_VENV="$LOCAL_VENV"
+fi
+
 unset VIRTUAL_ENV PYTHONPATH PYTHONHOME CONDA_PREFIX
 PATH=$(echo "$PATH" | tr ':' '\n' | grep -v -e '/lerobot/.venv/bin' -e '/envs/' | paste -sd:)
 export PATH="$GROOT_VENV/bin:$PATH" VIRTUAL_ENV="$GROOT_VENV"

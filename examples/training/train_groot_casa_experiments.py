@@ -73,6 +73,7 @@ from train_pi05_casa_experiments import (  # noqa: E402
     WARMUP_STEPS,
     WRIST_IMAGE_KEY,
     _ARM_JOINTS,
+    apply_resume,
     apply_smoke_test_overrides,
     make_image_transforms,
     make_timestamped_output_dir,
@@ -92,6 +93,7 @@ from lerobot.optim import (  # noqa: E402
     NamedParamGroupConfig,
 )
 from lerobot.policies.groot.configuration_groot import GrootConfig  # noqa: E402
+from lerobot.scripts.lerobot_train import train  # noqa: E402
 from lerobot.utils.constants import ACTION, OBS_STATE  # noqa: E402
 from lerobot.utils.import_utils import register_third_party_plugins  # noqa: E402
 
@@ -490,7 +492,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state-dropout-p", type=float, default=STATE_DROPOUT_P)
     parser.add_argument("--dry-run", action="store_true",
                         help="Build policy, optimizer and processors, assert the arm's partition, exit.")
-    parser.add_argument("--smoke-test", action="store_true")
+    parser.add_argument("--smoke-test", action="store_true",
+                        help="A few real steps + checkpoint + eval rollout + wandb log, into <output root>/smoketest/.")
+    parser.add_argument("--resume-from", type=Path, default=None,
+                        help="Run directory of an interrupted run; continues from checkpoints/last.")
     args = parser.parse_args()
     args.color_jitter = parse_color_jitter(args.color_jitter_params)
     return args
@@ -504,10 +509,13 @@ if __name__ == "__main__":
                       state_dropout_p=args.state_dropout_p)
     if args.smoke_test:
         cfg = apply_smoke_test_overrides(cfg)
+        if args.steps != TOTAL_STEPS:  # e.g. extend a smoke run to test --resume-from
+            cfg.steps = args.steps
+    if args.resume_from:
+        # pi05's resume (config_path on argv, use_peft instead of re-wrapping LoRA, original
+        # output_dir). GR00T uses no optimizer preset, so its preset branch is a no-op here.
+        cfg = apply_resume(cfg, args.resume_from)
     if args.dry_run:
         run_dry_run(cfg, EXPERIMENTS[args.experiment])
     else:
-        raise SystemExit(
-            "Training is not wired yet: the random external-camera swap (pi05 parity) and the PEFT "
-            "resume path come first. Use --dry-run."
-        )
+        train(cfg)
