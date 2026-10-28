@@ -21,7 +21,16 @@ if [ -n "${SLURM_TMPDIR:-}" ] && [ "${GROOT_LOCAL_VENV:-1}" = "1" ]; then
         flock 9
         if [ ! -f "$LOCAL_VENV/.copied" ]; then
             t0=$SECONDS
-            rsync -a --delete "$GROOT_VENV/" "$LOCAL_VENV/"
+            # Several jobs copying at once make BeeGFS report existing files as vanished (rsync exit
+            # 24, 2026-10-27: six jobs, 400-1300 files each). Each retry only fetches what is missing.
+            for attempt in 1 2 3 4 5 6; do
+                rc=0
+                rsync -a --delete "$GROOT_VENV/" "$LOCAL_VENV/" 2>"$SLURM_TMPDIR/.venv-rsync.err" || rc=$?
+                [ "$rc" = 0 ] && break
+                echo "[groot_env] venv copy attempt $attempt: rsync rc=$rc ($(grep -c vanished "$SLURM_TMPDIR/.venv-rsync.err") vanished), retrying" >&2
+                [ "$attempt" = 6 ] && { tail -5 "$SLURM_TMPDIR/.venv-rsync.err" >&2; exit "$rc"; }
+                sleep $((RANDOM % 20 + 10))
+            done
             touch "$LOCAL_VENV/.copied"
             echo "[groot_env] copied venv to $LOCAL_VENV in $((SECONDS - t0)) s" >&2
         fi

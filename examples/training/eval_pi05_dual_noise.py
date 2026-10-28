@@ -107,6 +107,19 @@ def _batch_size(batch: dict) -> int:
     raise ValueError("Could not infer batch size from the observation batch.")
 
 
+def _noise_horizon(policy) -> int:
+    """Steps in the noise tensor `predict_action_chunk(noise=...)` expects.
+
+    pi05 denoises `chunk_size` steps. GR00T N1.7's flow-matching loop always starts from its
+    action head's native horizon (40), however short the trained chunk (32): the extra steps are
+    masked in training and discarded at inference, but the noise must still cover them.
+    """
+    groot_model = getattr(policy, "_groot_model", None)
+    if groot_model is not None:
+        return int(groot_model.action_head.action_horizon)
+    return int(policy.config.chunk_size)
+
+
 @contextmanager
 def duplicated_noise(policy):
     """Temporarily make `policy` denoise every chunk from ONE repeated noise vector.
@@ -115,7 +128,8 @@ def duplicated_noise(policy):
     the normal path is the `noise=` argument. Restores the original attributes on exit.
     """
     config = policy.config
-    chunk_size, n_action_steps = config.chunk_size, config.n_action_steps
+    n_action_steps = config.n_action_steps
+    noise_horizon = _noise_horizon(policy)
     max_action_dim = config.max_action_dim
     device = next(policy.parameters()).device
     queue: deque = deque(maxlen=n_action_steps)
@@ -132,7 +146,7 @@ def duplicated_noise(policy):
                 size=(bsize, 1, max_action_dim),
                 dtype=torch.float32,
                 device=device,
-            ).expand(bsize, chunk_size, max_action_dim)
+            ).expand(bsize, noise_horizon, max_action_dim)
             actions = policy.predict_action_chunk(batch, noise=noise.contiguous())
             queue.extend(actions[:, :n_action_steps].transpose(0, 1))
         return queue.popleft()
@@ -339,6 +353,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-project", default="lerobot-dex-eval")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--no-wandb", action="store_true")
+    parser.add_argument("--modes", nargs="+", choices=NOISE_MODES, default=list(NOISE_MODES),
+                        help="Noise modes to score. A rung's row is replaced, so score all modes you need at once.")
     parser.add_argument(
         "--results-name",
         default=RESULTS_FILENAME,
@@ -443,6 +459,7 @@ def main() -> None:
                 seed=args.seed,
                 videos_dir=videos_dir,
                 n_videos=0 if args.no_videos else args.n_videos,
+                modes=tuple(args.modes),
             )
             results = merge_result(out_path, step, row)
             logging.info("Wrote %s", out_path)
@@ -464,6 +481,8 @@ def main() -> None:
     print("\n" + header)
     for step in sorted(results, key=int):
         for mode in NOISE_MODES:
+            if mode not in results[step]:
+                continue
             row = results[step][mode]
             cols = "  ".join(f"{row[f'pc_success_{g}']:>8.1f}%" for g in groups)
             print(f"{step:>8}  {mode:>10}  {row['pc_success']:>5.1f}%  {cols}")
