@@ -606,3 +606,25 @@ def test_save_pretrained_round_trip_via_disk(tmp_path):
     assert set(src_sd) == set(dst_sd)
     for key in src_sd:
         assert torch.allclose(src_sd[key].cpu(), dst_sd[key].cpu()), f"{key} mismatch after disk round-trip"
+
+
+@pytest.mark.parametrize(("reduction", "expected"), [("min", [1.0, -2.0]), ("mean", [2.0, 0.0])])
+def test_critic_reduction(reduction, expected):
+    algorithm, _ = _make_algorithm()
+    algorithm.config.critic_reduction = reduction
+    q_values = torch.tensor([[1.0, -2.0], [3.0, 2.0]])
+    assert algorithm._reduce_critics(q_values).tolist() == expected
+
+
+def test_unknown_critic_reduction_raises():
+    algorithm, _ = _make_algorithm()
+    algorithm.config.critic_reduction = "max"
+    with pytest.raises(ValueError, match="critic_reduction"):
+        algorithm.update(_batch_iterator())
+
+
+def test_update_reports_entropy():
+    algorithm, _ = _make_algorithm(policy_update_freq=1)
+    stats = algorithm.update(_batch_iterator())
+    assert stats.extra["target_entropy"] == float(algorithm.target_entropy)
+    assert isinstance(stats.extra["entropy"], float)
