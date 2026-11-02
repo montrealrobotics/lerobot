@@ -684,3 +684,30 @@ def test_async_iterator_multiple_iterations():
 
     # Ensure iterator can be disposed without blocking
     del iterator
+
+
+def test_state_dict_round_trip_keeps_eviction_order():
+    def state(i: float) -> dict:
+        return {OBS_STATE: torch.full((2,), i)}
+
+    source = ReplayBuffer(3, "cpu", [OBS_STATE])
+    for i in range(5):
+        source.add(state(i), torch.full((2,), float(i)), float(i), state(i + 1), i == 4, False)
+
+    restored = ReplayBuffer(3, "cpu", [OBS_STATE])
+    restored.load_state_dict(source.state_dict())
+
+    assert len(restored) == 3
+    assert restored.actions[:, 0].tolist() == [2.0, 3.0, 4.0]
+    assert restored.next_states[OBS_STATE][:, 0].tolist() == [3.0, 4.0, 5.0]
+    assert restored.dones.tolist() == [False, False, True]
+
+    restored.add(state(5), torch.full((2,), 5.0), 5.0, state(6), False, False)
+    assert restored.actions[:, 0].tolist() == [5.0, 3.0, 4.0], "oldest transition is evicted first"
+
+
+def test_load_state_dict_rejects_capacity_mismatch():
+    source = ReplayBuffer(3, "cpu", [OBS_STATE])
+    source.add({OBS_STATE: torch.zeros(2)}, torch.zeros(2), 0.0, {OBS_STATE: torch.zeros(2)}, False, False)
+    with pytest.raises(ValueError, match="capacity=3"):
+        ReplayBuffer(4, "cpu", [OBS_STATE]).load_state_dict(source.state_dict())
