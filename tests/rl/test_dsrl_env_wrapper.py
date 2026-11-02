@@ -113,3 +113,17 @@ def test_wrapper_requires_vector_env():
             generate_action_chunk_fn=lambda obs, noise: torch.zeros((1, 3, 1)),
             device="cpu",
         )
+
+
+def test_wrapper_rejects_same_step_autoreset():
+    import pytest
+
+    env = gym.vector.SyncVectorEnv([_ChunkTestEnv], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
+    with pytest.raises(ValueError, match="SAME_STEP"):
+        DSRLEnvWrapper(
+            env=env,
+            noise_dim=3,
+            prepare_obs_fn=_prepare_obs,
+            generate_action_chunk_fn=lambda obs, noise: torch.zeros((1, 3, 1)),
+            device="cpu",
+        )

@@ -34,7 +34,6 @@ import numpy as np
 import torch
 
 from lerobot.envs.configs import PushtEnv
-from lerobot.envs.factory import make_env
 from lerobot.envs.utils import preprocess_observation
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.rl.dsrl import train_dsrl
@@ -62,8 +61,7 @@ def _make_single_env(env_cfg):
 def _make_collect_env(env_cfg, num_envs: int) -> gym.vector.VectorEnv:
     if num_envs < 1:
         raise ValueError("--collect_envs must be >= 1")
-    envs = make_env(env_cfg, n_envs=num_envs, use_async_envs=False)
-    return envs[env_cfg.type][0]
+    return gym.vector.SyncVectorEnv([lambda: _make_single_env(env_cfg) for _ in range(num_envs)])
 
 
 # ── Shared observation / action adapters (used by both training and eval) ──────────

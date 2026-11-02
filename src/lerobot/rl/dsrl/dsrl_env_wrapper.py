@@ -94,6 +94,13 @@ class DSRLEnvWrapper:
                 "DSRLEnvWrapper requires a gym.vector.VectorEnv; wrap a single env in a "
                 "SyncVectorEnv (num_envs=1) before passing it here."
             )
+        # SAME_STEP replaces the terminal step's obs and info with the reset ones, so
+        # is_success and the terminal observation never reach this wrapper.
+        if env.metadata.get("autoreset_mode") == gym.vector.AutoresetMode.SAME_STEP:
+            raise ValueError(
+                "DSRLEnvWrapper resets finished envs itself and needs the terminal step's info; "
+                "build the vector env with AutoresetMode.NEXT_STEP (gymnasium's default), not SAME_STEP."
+            )
 
         self.env = env
         self.num_envs = env.num_envs
