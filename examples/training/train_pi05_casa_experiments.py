@@ -97,6 +97,9 @@ DATA (read from dataset metadata)
     unaffected; cross-task transfer of a selected LR is the claim this weakens.
   * The state dims confirm the robot assignment: 23 = Panda(7) + LEAP(16) for coffee,
     22 = XArm6(6) + LEAP(16) for lamp.
+  * water_plant is a DexJoCo task (Panda + Allegro, 96 demos after replay filtering), read
+    from a local `dexjoco-convert` output and evaluated in the DexJoCo plugin env. It needs
+    mujoco 3.4.0, so it runs from its own venv (sft_arms_dexjoco_mila.sbatch).
   * ~81 epochs over 56 coffee demonstrations at 4.14B parameters will memorise. How
     fast each arm overfits is part of the measurement, which is what makes the
     checkpoint ladder and the LR sweep load-bearing rather than cosmetic.
@@ -116,7 +119,6 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import robosuite
 import torch
 
 from lerobot.configs import FeatureType, PolicyFeature
@@ -125,7 +127,7 @@ from lerobot.configs.train import TrainPipelineConfig
 from lerobot.configs.types import NormalizationMode
 from lerobot.transforms import ImageTransformConfig, ImageTransformsConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
-from lerobot.envs.configs import RoboCasaEnv
+from lerobot.envs.configs import EnvConfig, RoboCasaEnv
 from lerobot.optim import (
     CosineDecayWithWarmupSchedulerConfig,
     NamedAdamWConfig,
@@ -172,6 +174,20 @@ def _default_lamp_placement_bank() -> str:
 
 
 LAMP_PLACEMENT_BANK = _default_lamp_placement_bank()
+
+
+def _default_dexjoco_datasets_root() -> Path:
+    """Root of locally converted DexJoCo datasets, overridable with $LEROBOT_DEXJOCO_DATASETS.
+
+    Laid out as <root>/<rand_obj|rand_full>/<task>, as written by DexJoCo's `dexjoco-convert`.
+    """
+    env_root = os.environ.get("LEROBOT_DEXJOCO_DATASETS")
+    if env_root:
+        return Path(env_root)
+    return Path("/network/scratch/a/artur.kuramshin/dexjoco/datasets")
+
+
+DEXJOCO_DATASETS_ROOT = _default_dexjoco_datasets_root()
 
 # The two lamp placements in-loop eval runs, one per eval sub-env, both in kitchen seed 1 (L4S8):
 #   s1_reference -- the scene's own placement, i.e. what every fixed-placement lightbulb run so
@@ -288,7 +304,6 @@ RANDOM_EXTERNAL_IMAGE_KEYS = [
     "observation.images.robot0_agentview_right",
 ]
 
-_ROBOSUITE_CONTROLLER_DIR = Path(robosuite.__file__).parent / "controllers/config/robots"
 # Arm joints per robot, used to check the eval action space against the dataset.
 _ARM_JOINTS = {"PandaDexLeapRHOmron": 7, "XArm6DexLeapRHOmron": 6}
 LEAP_HAND_DIMS = 16
@@ -298,7 +313,10 @@ def resolve_controller(filename: str | None) -> str | None:
     """Absolute path to a robosuite composite-controller config, or None for the robot default."""
     if filename is None:
         return None
-    path = _ROBOSUITE_CONTROLLER_DIR / filename
+    # Imported here so DexJoCo tasks run in a venv without robosuite.
+    import robosuite
+
+    path = Path(robosuite.__file__).parent / "controllers/config/robots" / filename
     if not path.exists():
         raise FileNotFoundError(f"Controller config not found: {path}")
     return str(path)
@@ -311,7 +329,15 @@ class TaskSpec:
     name: str
     dataset: str
     robot: str
-    robocasa_task: str
+    # Exactly one of these names the eval environment: a robosuite env for RoboCasa tasks,
+    # or a DexJoCo task (`--env.task`) for the DexJoCo plugin.
+    robocasa_task: str | None = None
+    dexjoco_task: str | None = None
+    # Local dataset directory; None loads `dataset` from the Hugging Face Hub.
+    dataset_root: str | None = None
+    wrist_image_key: str = WRIST_IMAGE_KEY
+    external_image_key: str = EXTERNAL_IMAGE_KEY
+    random_external_image_keys: tuple[str, ...] = tuple(RANDOM_EXTERNAL_IMAGE_KEYS)
     # Composite-controller config for EVAL. A property of how the DATASET was collected,
     # not of the robot, so it is stated per task rather than derived from the robot.
     # None = robosuite's default for the robot (OSC_POSE, delta end-effector).
@@ -328,6 +354,10 @@ class TaskSpec:
     eval_scene_seeds: tuple[int, ...] | None = None
     eval_placement_bank: str | None = None
     eval_placement_ids: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if (self.robocasa_task is None) == (self.dexjoco_task is None):
+            raise ValueError(f"Task '{self.name}' must set exactly one of robocasa_task / dexjoco_task.")
 
     @property
     def eval_batch_size(self) -> int:
@@ -363,6 +393,23 @@ TASKS: dict[str, TaskSpec] = {
         eval_scene_seeds=(1, 1),
         eval_placement_bank=LAMP_PLACEMENT_BANK,
         eval_placement_ids=LAMP_EVAL_PLACEMENT_IDS,
+    ),
+    "water_plant": TaskSpec(
+        name="water_plant",
+        dataset="dexjoco/water_plant_rand_obj",
+        robot="PandaAllegro",
+        dexjoco_task="water_plant",
+        # rand_obj (object placement + table height) matches the eval env with randomize=False.
+        dataset_root=str(DEXJOCO_DATASETS_ROOT / "rand_obj" / "water_plant"),
+        wrist_image_key="observation.images.wrist",
+        external_image_key="observation.images.ego",
+        # The dataset renders three external views; the env renders only `ego`, so at eval
+        # the swap passes `ego` through unchanged.
+        random_external_image_keys=(
+            "observation.images.ego",
+            "observation.images.ego_left",
+            "observation.images.ego_right",
+        ),
     ),
 }
 
@@ -640,28 +687,24 @@ def make_visual_feature(metadata: LeRobotDatasetMetadata, key: str) -> PolicyFea
     return PolicyFeature(type=FeatureType.VISUAL, shape=chw_shape)
 
 
-def make_config(
-    experiment: str,
-    task: str,
-    lr_scale: float,
-    seed: int,
-    eval_freq: int = EVAL_FREQ,
-    steps: int = TOTAL_STEPS,
-    save_freq: int = SAVE_FREQ,
-    color_jitter: dict[str, float] | None = None,
-    state_dropout_p: float = STATE_DROPOUT_P,
-) -> TrainPipelineConfig:
-    spec = EXPERIMENTS[experiment]
-    task_spec = TASKS[task]
-    if color_jitter is None:
-        color_jitter = COLOR_JITTER
-    metadata = LeRobotDatasetMetadata(task_spec.dataset)
-    action_dim = metadata.features["action"]["shape"][0]
-    state_dim = metadata.features["observation.state"]["shape"][0]
+def make_eval_env(task_spec: TaskSpec, metadata: LeRobotDatasetMetadata) -> EnvConfig:
+    if task_spec.dexjoco_task is not None:
+        # Importing the plugin registers `--env.type=dexjoco`; this fork predates
+        # LeRobot's automatic `lerobot_env_*` discovery.
+        from dexjoco.configs import DexJoCoEnvConfig
+
+        height, width, _ = metadata.features[task_spec.external_image_key]["shape"]
+        return DexJoCoEnvConfig(
+            task=task_spec.dexjoco_task,
+            fps=metadata.fps,
+            render_height=height,
+            render_width=width,
+        )
 
     # The eval controller is only correct if it consumes exactly the action vector the
     # dataset stores. Training never notices a mismatch -- it only reads dataset actions --
     # so a wrong controller shows up solely as every rollout failing.
+    action_dim = metadata.features["action"]["shape"][0]
     expected_action_dim = task_spec.arm_action_dim + LEAP_HAND_DIMS
     if expected_action_dim != action_dim:
         raise ValueError(
@@ -672,7 +715,7 @@ def make_config(
             f"JOINT_POSITION config needs that many arm dims, OSC_POSE needs 6.)"
         )
 
-    env = RoboCasaEnv(
+    return RoboCasaEnv(
         task=task_spec.robocasa_task,
         robot=task_spec.robot,
         # Absolute-joint-target policies must be evaluated with the joint-position
@@ -689,6 +732,27 @@ def make_config(
         placement_ids=list(task_spec.eval_placement_ids) if task_spec.eval_placement_ids else None,
     )
 
+
+def make_config(
+    experiment: str,
+    task: str,
+    lr_scale: float,
+    seed: int,
+    eval_freq: int = EVAL_FREQ,
+    steps: int = TOTAL_STEPS,
+    save_freq: int = SAVE_FREQ,
+    color_jitter: dict[str, float] | None = None,
+    state_dropout_p: float = STATE_DROPOUT_P,
+) -> TrainPipelineConfig:
+    spec = EXPERIMENTS[experiment]
+    task_spec = TASKS[task]
+    if color_jitter is None:
+        color_jitter = COLOR_JITTER
+    metadata = LeRobotDatasetMetadata(task_spec.dataset, root=task_spec.dataset_root)
+    state_dim = metadata.features["observation.state"]["shape"][0]
+    action_dim = metadata.features["action"]["shape"][0]
+    env = make_eval_env(task_spec, metadata)
+
     # Scale LRs for the per-arm mini-sweep.
     peak_lr = _scaled(spec.peak_lr, lr_scale)
     decay_lr = _scaled(spec.decay_lr, lr_scale)
@@ -704,6 +768,7 @@ def make_config(
             # MultiLeRobotDataset (extra dataset_index plumbing, common-key
             # intersection) for no benefit here.
             repo_id=task_spec.dataset,
+            root=task_spec.dataset_root,
             video_backend="pyav",
             image_transforms=make_image_transforms(color_jitter),
         ),
@@ -731,11 +796,11 @@ def make_config(
             max_action_dim=max(32, action_dim),
             input_features={
                 "observation.state": PolicyFeature(type=FeatureType.STATE, shape=(state_dim,)),
-                WRIST_IMAGE_KEY: make_visual_feature(metadata, WRIST_IMAGE_KEY),
-                EXTERNAL_IMAGE_KEY: make_visual_feature(metadata, EXTERNAL_IMAGE_KEY),
+                task_spec.wrist_image_key: make_visual_feature(metadata, task_spec.wrist_image_key),
+                task_spec.external_image_key: make_visual_feature(metadata, task_spec.external_image_key),
             },
-            random_external_camera_keys=RANDOM_EXTERNAL_IMAGE_KEYS,
-            random_external_camera_output_key=EXTERNAL_IMAGE_KEY,
+            random_external_camera_keys=list(task_spec.random_external_image_keys),
+            random_external_camera_output_key=task_spec.external_image_key,
             random_external_camera_p=0.5,
             force_current_processor_config=True,
             # Unchanged pi05 architecture: category-specific path OFF for the
