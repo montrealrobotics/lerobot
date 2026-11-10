@@ -97,9 +97,6 @@ DATA (read from dataset metadata)
     unaffected; cross-task transfer of a selected LR is the claim this weakens.
   * The state dims confirm the robot assignment: 23 = Panda(7) + LEAP(16) for coffee,
     22 = XArm6(6) + LEAP(16) for lamp.
-  * water_plant is a DexJoCo task (Panda + Allegro, 96 demos after replay filtering), read
-    from a local `dexjoco-convert` output and evaluated in the DexJoCo plugin env. It needs
-    mujoco 3.4.0, so it runs from its own venv (sft_arms_dexjoco_mila.sbatch).
   * ~81 epochs over 56 coffee demonstrations at 4.14B parameters will memorise. How
     fast each arm overfits is part of the measurement, which is what makes the
     checkpoint ladder and the LR sweep load-bearing rather than cosmetic.
@@ -176,18 +173,9 @@ def _default_lamp_placement_bank() -> str:
 LAMP_PLACEMENT_BANK = _default_lamp_placement_bank()
 
 
-def _default_dexjoco_datasets_root() -> Path:
-    """Root of locally converted DexJoCo datasets, overridable with $LEROBOT_DEXJOCO_DATASETS.
-
-    Laid out as <root>/<rand_obj|rand_full>/<task>, as written by DexJoCo's `dexjoco-convert`.
-    """
-    env_root = os.environ.get("LEROBOT_DEXJOCO_DATASETS")
-    if env_root:
-        return Path(env_root)
-    return Path("/network/scratch/a/artur.kuramshin/dexjoco/datasets")
-
-
-DEXJOCO_DATASETS_ROOT = _default_dexjoco_datasets_root()
+DEXJOCO_DATASETS_ROOT = Path(
+    os.environ.get("LEROBOT_DEXJOCO_DATASETS", "/network/scratch/a/artur.kuramshin/dexjoco/datasets")
+)
 
 # The two lamp placements in-loop eval runs, one per eval sub-env, both in kitchen seed 1 (L4S8):
 #   s1_reference -- the scene's own placement, i.e. what every fixed-placement lightbulb run so
@@ -313,7 +301,6 @@ def resolve_controller(filename: str | None) -> str | None:
     """Absolute path to a robosuite composite-controller config, or None for the robot default."""
     if filename is None:
         return None
-    # Imported here so DexJoCo tasks run in a venv without robosuite.
     import robosuite
 
     path = Path(robosuite.__file__).parent / "controllers/config/robots" / filename
@@ -329,11 +316,8 @@ class TaskSpec:
     name: str
     dataset: str
     robot: str
-    # Exactly one of these names the eval environment: a robosuite env for RoboCasa tasks,
-    # or a DexJoCo task (`--env.task`) for the DexJoCo plugin.
     robocasa_task: str | None = None
     dexjoco_task: str | None = None
-    # Local dataset directory; None loads `dataset` from the Hugging Face Hub.
     dataset_root: str | None = None
     wrist_image_key: str = WRIST_IMAGE_KEY
     external_image_key: str = EXTERNAL_IMAGE_KEY
@@ -362,6 +346,24 @@ class TaskSpec:
     @property
     def eval_batch_size(self) -> int:
         return len(self.eval_scene_seeds) if self.eval_scene_seeds else DEFAULT_EVAL_BATCH_SIZE
+
+
+def _dexjoco_task(task: str) -> TaskSpec:
+    return TaskSpec(
+        name=task,
+        dataset=f"dexjoco/{task}_rand_obj",
+        robot="PandaAllegro",
+        dexjoco_task=task,
+        # rand_obj (object placement + table height) matches the eval env with randomize=False.
+        dataset_root=str(DEXJOCO_DATASETS_ROOT / "rand_obj" / task),
+        wrist_image_key="observation.images.wrist",
+        external_image_key="observation.images.ego",
+        random_external_image_keys=(
+            "observation.images.ego",
+            "observation.images.ego_left",
+            "observation.images.ego_right",
+        ),
+    )
 
 
 TASKS: dict[str, TaskSpec] = {
@@ -394,23 +396,9 @@ TASKS: dict[str, TaskSpec] = {
         eval_placement_bank=LAMP_PLACEMENT_BANK,
         eval_placement_ids=LAMP_EVAL_PLACEMENT_IDS,
     ),
-    "water_plant": TaskSpec(
-        name="water_plant",
-        dataset="dexjoco/water_plant_rand_obj",
-        robot="PandaAllegro",
-        dexjoco_task="water_plant",
-        # rand_obj (object placement + table height) matches the eval env with randomize=False.
-        dataset_root=str(DEXJOCO_DATASETS_ROOT / "rand_obj" / "water_plant"),
-        wrist_image_key="observation.images.wrist",
-        external_image_key="observation.images.ego",
-        # The dataset renders three external views; the env renders only `ego`, so at eval
-        # the swap passes `ego` through unchanged.
-        random_external_image_keys=(
-            "observation.images.ego",
-            "observation.images.ego_left",
-            "observation.images.ego_right",
-        ),
-    ),
+    "water_plant": _dexjoco_task("water_plant"),
+    "pick_bucket": _dexjoco_task("pick_bucket"),
+    "hammer_nail": _dexjoco_task("hammer_nail"),
 }
 
 # ----------------------------------------------------------------------------
@@ -689,8 +677,6 @@ def make_visual_feature(metadata: LeRobotDatasetMetadata, key: str) -> PolicyFea
 
 def make_eval_env(task_spec: TaskSpec, metadata: LeRobotDatasetMetadata) -> EnvConfig:
     if task_spec.dexjoco_task is not None:
-        # Importing the plugin registers `--env.type=dexjoco`; this fork predates
-        # LeRobot's automatic `lerobot_env_*` discovery.
         from dexjoco.configs import DexJoCoEnvConfig
 
         height, width, _ = metadata.features[task_spec.external_image_key]["shape"]
