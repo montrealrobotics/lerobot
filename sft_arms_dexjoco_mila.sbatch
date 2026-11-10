@@ -107,45 +107,65 @@ prune_loop () {
     while true; do
         sleep 300
         [ -d "$root" ] || continue
-        local latest
-        latest=$(find "$root" -maxdepth 1 -type d -regex '.*/[0-9]+' -printf '%f\n' 2>/dev/null | sort -n | tail -1)
-        [ -n "$latest" ] || continue
+        local last_target
+        last_target=$(basename "$(readlink -f "$root/last")" 2>/dev/null)
+        [ -n "$last_target" ] && [ "$last_target" != last ] || continue
         for d in "$root"/[0-9]*; do
             [ -d "$d" ] || continue
-            [ "$(basename "$d")" = "$latest" ] && continue
+            [ "$(basename "$d")" = "$last_target" ] && continue
             if [ -d "$d/training_state" ]; then
                 rm -rf "$d/training_state"
-                echo "[prune] dropped optimizer state from $(basename "$d") (keeping $latest)"
+                echo "[prune] dropped optimizer state from $(basename "$d") (keeping $last_target)"
             fi
         done
     done
 }
 
+# Preemption requeues the job, which reruns this script from the top.
+RUN_RECORD="$OUTROOT/.slurm_runs/${SLURM_JOB_ID:-local}"
+RUN=""
+RESUME=()
+if [ -f "$RUN_RECORD" ]; then
+    RUN=$(cat "$RUN_RECORD")
+    if [ -d "$RUN/checkpoints/last/training_state" ]; then
+        RESUME=(--resume-from "$RUN")
+        echo "=== requeued: resuming $RUN from checkpoint $(basename "$(readlink -f "$RUN/checkpoints/last")") ==="
+    else
+        echo "=== requeued: $RUN has no resumable checkpoint yet, starting a new run ==="
+        RUN=""
+    fi
+fi
+
 echo "=== training ($(date)) ==="
 srun python examples/training/train_pi05_casa_experiments.py \
     --experiment "$ARM" \
     --task "$TASK" \
+    "${RESUME[@]}" \
     "$@" &
 TRAIN_PID=$!
 
-if [ "$PRUNE" = "1" ]; then
-    (
+(
+    if [ -z "$RUN" ]; then
         for _ in $(seq 1 60); do
             sleep 30
             # TASK must be in the pattern: coffee and lamp jobs share an arm name.
             RUN=$(find "$OUTROOT" -maxdepth 2 -type d -newermt '-15 minutes' -name "*_${TASK}_${ARM}_*" 2>/dev/null | sort | tail -1)
             [ -n "$RUN" ] && break
         done
-        if [ -n "${RUN:-}" ]; then
-            echo "[prune] watching $RUN/checkpoints"
-            prune_loop "$RUN/checkpoints"
-        else
-            echo "[prune] WARNING: could not locate the run directory; pruning disabled"
-        fi
-    ) &
-    PRUNE_PID=$!
-    trap 'kill $PRUNE_PID 2>/dev/null || true' EXIT
-fi
+    fi
+    if [ -z "$RUN" ]; then
+        echo "[run] WARNING: could not locate the run directory; no pruning, and a requeue restarts from scratch"
+        exit 0
+    fi
+    mkdir -p "$(dirname "$RUN_RECORD")"
+    echo "$RUN" > "$RUN_RECORD"
+    if [ "$PRUNE" = "1" ]; then
+        echo "[prune] watching $RUN/checkpoints"
+        prune_loop "$RUN/checkpoints"
+    fi
+) &
+WATCH_PID=$!
+trap 'kill $WATCH_PID 2>/dev/null || true' EXIT
 
 wait $TRAIN_PID
 TRAIN_RC=$?
