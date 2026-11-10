@@ -1,13 +1,6 @@
 #!/bin/bash
-# SFT experiment arms on DexJoCo tasks -- MILA cluster. RoboCasa sibling: sft_arms_mila.sbatch.
-#
 #   sbatch --job-name=sft_arm0_water_plant sft_arms_dexjoco_mila.sbatch arm0_expert_only water_plant
 #   sbatch --job-name=smoke sft_arms_dexjoco_mila.sbatch arm0_expert_only water_plant --smoke-test
-#
-# DexJoCo pins mujoco 3.4.0 while robosuite needs the 3.2.6 in .venv, so each job builds
-# its own venv on node-local disk from this checkout's lockfile, plus the DexJoCo plugin
-# from $DEXJOCO. Everything else matches sft_arms_mila.sbatch, and both end in the same
-# srun line forwarding "$@", so the fairness invariants live in the training script.
 #
 #SBATCH --partition=main
 #SBATCH --gres=gpu:l40s:1
@@ -24,31 +17,9 @@ TASK=${2:?usage: sbatch sft_arms_dexjoco_mila.sbatch <arm> <task> [extra args...
 shift 2
 
 REPO=/network/scratch/a/artur.kuramshin/lerobot-sft-dexjoco
-DEXJOCO=/network/scratch/a/artur.kuramshin/dexjoco
 OUTROOT=/network/scratch/a/artur.kuramshin/lerobot/outputs/train
 cd "$REPO"
-
-source ~/.bashrc          # HF_HOME / HF_TOKEN live here on Mila
-export UV_CACHE_DIR=${UV_CACHE_DIR:-/network/scratch/a/artur.kuramshin/uv_cache}
-# Node-local venv: imports from a venv on the networked scratch filesystem have failed
-# intermittently in spawned workers.
-export UV_PROJECT_ENVIRONMENT="${SLURM_TMPDIR:-/tmp}/venv_${SLURM_JOB_ID:-local}"
-~/.local/bin/uv sync --frozen --quiet --extra pi --extra peft --extra training --extra dataset
-~/.local/bin/uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
-    mujoco==3.4.0 "dm-robotics-transformations>=0.10.0" "tyro>=1.0.16"
-# --no-deps: the plugin pins lerobot==0.6.1, which would replace this fork.
-~/.local/bin/uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" --no-deps -e "$DEXJOCO"
-source "$UV_PROJECT_ENVIRONMENT/bin/activate"
-
-export MUJOCO_GL=egl
-export PYOPENGL_PLATFORM=egl
-export PYTHONUNBUFFERED=1
-export OMP_NUM_THREADS=4
-export TOKENIZERS_PARALLELISM=false
-export TORCHINDUCTOR_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/inductor_${SLURM_JOB_ID}"
-export NUMBA_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/numba_${SLURM_JOB_ID}"
-export TRITON_CACHE_DIR="${SLURM_TMPDIR:-/tmp}/triton_${SLURM_JOB_ID}"
-mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$NUMBA_CACHE_DIR" "$TRITON_CACHE_DIR" "$(dirname "$OUTROOT")/slurm_logs"
+source dexjoco_env.sh
 
 echo "=== preflight ($(date)) ==="
 echo "job=${SLURM_JOB_ID:-none} node=$(hostname) arm=$ARM task=$TASK extra=$*"
@@ -104,8 +75,6 @@ if fail:
 print("preflight OK")
 PREFLIGHT
 
-# Build the eval env once and reset it, so a broken plugin install or EGL setup fails here
-# rather than at the first in-loop eval, thousands of steps in.
 python - "$TASK" <<'ENVCHECK'
 import sys
 task = sys.argv[1]
@@ -122,7 +91,7 @@ envs = make_env(env_cfg, n_envs=1, use_async_envs=False)
 env = next(iter(next(iter(envs.values())).values()))
 obs, _ = env.reset(seed=0)
 prompt = env.call("task_description")[0]
-dataset_prompts = set(meta.tasks.index) if hasattr(meta.tasks, "index") else set(meta.tasks)
+dataset_prompts = set(meta.tasks.index)
 env.close()
 print(f"dexjoco env {spec.dexjoco_task} OK: cameras={sorted(obs['pixels'])} prompt={prompt!r}")
 if prompt not in dataset_prompts:
