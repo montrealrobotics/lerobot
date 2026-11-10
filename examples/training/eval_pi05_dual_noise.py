@@ -19,6 +19,9 @@ pass, per task:
 
 One sub-env per cell, so episode i belongs to cell i % n_cells.
 
+DexJoCo tasks have no banks: they are scored on the in-loop eval env as one cell, with
+--batch-size sub-envs in parallel.
+
 Usage:
     python examples/training/eval_pi05_dual_noise.py --run-dir <run> --task lamp \
         --steps 2000 4000 8000 16000 --episodes-per-cell 20
@@ -43,9 +46,9 @@ import numpy as np
 import torch
 
 from lerobot.configs.policies import PreTrainedConfig
-from lerobot.envs.configs import RoboCasaEnv
-from lerobot.envs.factory import make_env_pre_post_processors
-from lerobot.envs.robocasa_env import RoboCasaEnv as RoboCasaGymEnv
+from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
+from lerobot.envs.configs import EnvConfig, RoboCasaEnv
+from lerobot.envs.factory import make_env, make_env_pre_post_processors
 from lerobot.envs.robocasa_placement_bank import (
     PlacementBankWrapper,
     StartPoseRejectionWrapper,
@@ -61,7 +64,7 @@ from lerobot.utils.random_utils import set_seed
 from lerobot.utils.utils import init_logging
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from train_pi05_casa_experiments import TASKS, resolve_controller  # noqa: E402
+from train_pi05_casa_experiments import TASKS, make_eval_env, resolve_controller  # noqa: E402
 
 NOISE_MODES = ("iid", "duplicated")
 RESULTS_FILENAME = "dual_noise_dsrl_cells.json"
@@ -208,6 +211,7 @@ def build_cells(args, env_cfg: RoboCasaEnv) -> tuple[list[dict], dict]:
 
 def make_cell_vec_env(cells: list[dict], bank: dict, env_cfg: RoboCasaEnv, rejection: dict | None):
     """One sub-env per cell, built exactly as the DSRL eval builds them."""
+    from lerobot.envs.robocasa_env import RoboCasaEnv as RoboCasaGymEnv
 
     def factory(cell: dict):
         def _make():
@@ -235,9 +239,17 @@ def make_cell_vec_env(cells: list[dict], bank: dict, env_cfg: RoboCasaEnv, rejec
     return gym.vector.SyncVectorEnv([factory(c) for c in cells])
 
 
+def make_dexjoco_vec_env(task_spec, batch_size: int):
+    metadata = LeRobotDatasetMetadata(task_spec.dataset, root=task_spec.dataset_root)
+    env_cfg = make_eval_env(task_spec, metadata)
+    envs = make_env(env_cfg, n_envs=batch_size, use_async_envs=False)
+    vec = next(iter(next(iter(envs.values())).values()))
+    return env_cfg, [{"label": task_spec.name, "group": "all"}], vec
+
+
 def evaluate_step(
     pretrained_dir: Path,
-    env_cfg: RoboCasaEnv,
+    env_cfg: EnvConfig,
     vec,
     cells: list[dict],
     episodes_per_cell: int,
@@ -333,12 +345,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reject-start-rot-deg", type=float, default=None, help="Default: per task.")
     parser.add_argument("--reject-start-pos-cm", type=float, default=3.0)
     parser.add_argument("--reject-start-max-retries", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=10, help="DexJoCo only: parallel sub-envs.")
     parser.add_argument("--n-videos", type=int, default=2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-videos", action="store_true")
     parser.add_argument("--wandb-project", default="lerobot-dex-eval")
     parser.add_argument("--wandb-entity", default=None)
     parser.add_argument("--no-wandb", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip rungs already scored in the results file and continue their wandb run. "
+        "Implied when Slurm requeues the job.",
+    )
     parser.add_argument(
         "--results-name",
         default=RESULTS_FILENAME,
@@ -347,6 +366,11 @@ def parse_args() -> argparse.Namespace:
     )
     args = parser.parse_args()
 
+    if TASKS[args.task].dexjoco_task is not None:
+        if args.placement_bank or args.kitchen_bank or args.eval_sets:
+            parser.error("DexJoCo tasks have no placement banks or eval cells")
+        args.reject_start_rot_deg = 0.0
+        return args
     defaults = DSRL_EVAL[args.task]
     if args.placement_bank is None and args.kitchen_bank is None:
         args.placement_bank = defaults.get("placement_bank")
@@ -364,7 +388,14 @@ def init_wandb(args, task_spec, steps: list[int], labels: list[str]):
         return None
     import wandb
 
-    return wandb.init(
+    id_file = args.run_dir / f"{Path(args.results_name).stem}.wandb_id"
+    run_id = id_file.read_text().strip() if args.resume and id_file.exists() else None
+    # Not <run_dir>/wandb: a resumed training run takes its wandb id from <run_dir>/wandb/latest-run.
+    wandb_dir = args.run_dir / "dual_noise_wandb"
+    wandb_dir.mkdir(exist_ok=True)
+    run = wandb.init(
+        id=run_id,
+        resume="allow" if run_id else None,
         project=args.wandb_project,
         entity=args.wandb_entity,
         name=f"dualnoise_dsrlcells_{args.run_dir.name}",
@@ -385,8 +416,10 @@ def init_wandb(args, task_spec, steps: list[int], labels: list[str]):
             "steps": steps,
             "noise_modes": list(NOISE_MODES),
         },
-        dir=str(args.run_dir),
+        dir=str(wandb_dir),
     )
+    id_file.write_text(run.id)
+    return run
 
 
 def main() -> None:
@@ -397,9 +430,6 @@ def main() -> None:
 
     # Ascending: wandb silently drops any step lower than the last one logged in a run.
     steps = sorted(args.steps) if args.steps is not None else available_steps(args.run_dir)
-    env_cfg = build_env_cfg(task_spec, checkpoint_dir(args.run_dir, steps[0]), args.cameras)
-    cells, bank = build_cells(args, env_cfg)
-    labels = [c["label"] for c in cells]
     rejection = (
         {
             "max_rot_deg": args.reject_start_rot_deg,
@@ -409,6 +439,14 @@ def main() -> None:
         if args.reject_start_rot_deg > 0
         else None
     )
+    if task_spec.dexjoco_task is not None:
+        env_cfg, cells, vec = make_dexjoco_vec_env(task_spec, args.batch_size)
+    else:
+        env_cfg = build_env_cfg(task_spec, checkpoint_dir(args.run_dir, steps[0]), args.cameras)
+        cells, bank = build_cells(args, env_cfg)
+        # Built once for the whole ladder: identical for every checkpoint of a run.
+        vec = make_cell_vec_env(cells, bank, env_cfg, rejection)
+    labels = [c["label"] for c in cells]
     logging.info(
         "Scoring %d checkpoints %s on %d cells %s x %d episodes | cameras %s | rejection %s",
         len(steps),
@@ -422,10 +460,13 @@ def main() -> None:
 
     out_path = args.run_dir / args.results_name
     results = json.loads(out_path.read_text()) if out_path.exists() else {}
+    args.resume = args.resume or int(os.environ.get("SLURM_RESTART_COUNT", "0")) > 0
     run = init_wandb(args, task_spec, steps, labels)
+    if args.resume:
+        scored = [s for s in steps if set(NOISE_MODES) <= set(results.get(str(s), {}))]
+        steps = [s for s in steps if s not in scored]
+        logging.info("Resuming: already scored %s, remaining %s", scored, steps)
 
-    # Built once for the whole ladder: identical for every checkpoint of a run.
-    vec = make_cell_vec_env(cells, bank, env_cfg, rejection)
     try:
         for step in steps:
             pretrained_dir = checkpoint_dir(args.run_dir, step)
