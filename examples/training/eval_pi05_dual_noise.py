@@ -239,11 +239,12 @@ def make_cell_vec_env(cells: list[dict], bank: dict, env_cfg: RoboCasaEnv, rejec
     return gym.vector.SyncVectorEnv([factory(c) for c in cells])
 
 
-def make_dexjoco_vec_env(task_spec, batch_size: int):
+def make_dexjoco_vec_env(task_spec, batch_size: int, reset_range_scale: float):
     metadata = LeRobotDatasetMetadata(task_spec.dataset, root=task_spec.dataset_root)
     env_cfg = make_eval_env(task_spec, metadata)
     envs = make_env(env_cfg, n_envs=batch_size, use_async_envs=False)
     vec = next(iter(next(iter(envs.values())).values()))
+    vec.set_attr("reset_range_scale", reset_range_scale)
     return env_cfg, [{"label": task_spec.name, "group": "all"}], vec
 
 
@@ -346,6 +347,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reject-start-pos-cm", type=float, default=3.0)
     parser.add_argument("--reject-start-max-retries", type=int, default=10)
     parser.add_argument("--batch-size", type=int, default=10, help="DexJoCo only: parallel sub-envs.")
+    parser.add_argument(
+        "--reset-range-scale",
+        type=float,
+        default=1.0,
+        help="DexJoCo only: widen the table-height and object-position ranges by this factor.",
+    )
     parser.add_argument("--n-videos", type=int, default=2)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--no-videos", action="store_true")
@@ -371,6 +378,8 @@ def parse_args() -> argparse.Namespace:
             parser.error("DexJoCo tasks have no placement banks or eval cells")
         args.reject_start_rot_deg = 0.0
         return args
+    if args.reset_range_scale != 1.0:
+        parser.error("--reset-range-scale is DexJoCo only")
     defaults = DSRL_EVAL[args.task]
     if args.placement_bank is None and args.kitchen_bank is None:
         args.placement_bank = defaults.get("placement_bank")
@@ -415,6 +424,7 @@ def init_wandb(args, task_spec, steps: list[int], labels: list[str]):
             "seed": args.seed,
             "steps": steps,
             "noise_modes": list(NOISE_MODES),
+            "reset_range_scale": args.reset_range_scale,
         },
         dir=str(wandb_dir),
     )
@@ -440,7 +450,7 @@ def main() -> None:
         else None
     )
     if task_spec.dexjoco_task is not None:
-        env_cfg, cells, vec = make_dexjoco_vec_env(task_spec, args.batch_size)
+        env_cfg, cells, vec = make_dexjoco_vec_env(task_spec, args.batch_size, args.reset_range_scale)
     else:
         env_cfg = build_env_cfg(task_spec, checkpoint_dir(args.run_dir, steps[0]), args.cameras)
         cells, bank = build_cells(args, env_cfg)
