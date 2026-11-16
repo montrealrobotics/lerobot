@@ -1,6 +1,7 @@
 #!/bin/bash
 #   sbatch --job-name=sft_arm0_water_plant sft_arms_dexjoco_mila.sbatch arm0_expert_only water_plant
 #   sbatch --job-name=smoke sft_arms_dexjoco_mila.sbatch arm0_expert_only water_plant --smoke-test
+#   sbatch --gres=gpu:a100l:1 --job-name=sft_arm1_water_plant sft_arms_dexjoco_mila.sbatch arm1_full_ft water_plant
 #
 #SBATCH --partition=main
 #SBATCH --gres=gpu:l40s:1
@@ -24,6 +25,11 @@ source dexjoco_env.sh
 echo "=== preflight ($(date)) ==="
 echo "job=${SLURM_JOB_ID:-none} node=$(hostname) arm=$ARM task=$TASK extra=$*"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+GPU_MIB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+if [[ "$ARM" == *full_ft* && "$GPU_MIB" -lt 70000 ]]; then
+    echo "PREFLIGHT FAILED: $ARM peaks at ~54 GB; resubmit with --gres=gpu:a100l:1" >&2
+    exit 1
+fi
 
 OUTROOT="$OUTROOT" python - <<'PREFLIGHT'
 import os, shutil, sys
