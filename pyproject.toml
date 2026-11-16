@@ -514,7 +514,8 @@ sbatch_args = [
 ]
 
 [tool.cluv.clusters.fir]
-env = { UV_OFFLINE = "0", WANDB_MODE = "online", C_INCLUDE_PATH = "$SCRATCH/evdev_inc_sys" }
+# Fir's home quota is full, so uv keeps its Pythons on scratch.
+env = { UV_OFFLINE = "0", WANDB_MODE = "online", C_INCLUDE_PATH = "$SCRATCH/evdev_inc_sys", UV_PYTHON_INSTALL_DIR = "$SCRATCH/uv_python" }
 sbatch_args = [
     { account = "def-kdarvish", gpus-per-node = "h100:1" },
     { account = "rrg-bengioy-ad", gpus-per-node = "h100:1" },

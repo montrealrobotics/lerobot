@@ -12,6 +12,7 @@ export HF_HOME=$DEXJOCO_DATA/hf
 export LEROBOT_DEXJOCO_DATASETS=$DEXJOCO_DATA/datasets
 export UV_CACHE_DIR=$SCRATCH/uv_cache
 export UV_PROJECT_ENVIRONMENT="${SLURM_TMPDIR:-/tmp}/venv_${SLURM_JOB_ID:-local}"
+export UV_PYTHON=3.13    # what the Mila runs used; elsewhere uv would download the newest Python
 
 # Jobs starting together race on the shared uv cache (a file one job is still unpacking is
 # missing for the other), so retry after a random delay into a fresh venv: a failed sync can
