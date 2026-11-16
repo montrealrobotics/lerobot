@@ -513,15 +513,6 @@ sbatch_args = [
     { account = "def-gberseth", gpus-per-node = "h100:1" },
 ]
 
-[tool.cluv.clusters.fir]
-# Fir's home quota is full, so uv keeps its Pythons on scratch.
-env = { UV_OFFLINE = "0", WANDB_MODE = "online", C_INCLUDE_PATH = "$SCRATCH/evdev_inc_sys", UV_PYTHON_INSTALL_DIR = "$SCRATCH/uv_python" }
-sbatch_args = [
-    { account = "def-kdarvish", gpus-per-node = "h100:1" },
-    { account = "rrg-bengioy-ad", gpus-per-node = "h100:1" },
-    { account = "def-gberseth", gpus-per-node = "h100:1" },
-]
-
 [tool.cluv.clusters.rorqual]
 env = { C_INCLUDE_PATH = "$SCRATCH/evdev_inc" }
 sbatch_args = [
@@ -530,3 +521,4 @@ sbatch_args = [
     { account = "def-gberseth", gpus-per-node = "h100:1" },
     { account = "def-kdarvish", gpus-per-node = "h100:1" },
 ]
+# Not yet: fir's /home filesystem fails reads and writes (2026-11-16), which breaks uv's Python installs there.
