@@ -1096,6 +1096,12 @@ def parse_args() -> argparse.Namespace:
         help="Build policy + optimizer and assert this arm's trainable set, then exit.",
     )
     parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Run directory for a new run, in place of a timestamped one under the output root.",
+    )
+    parser.add_argument(
         "--resume-from",
         type=Path,
         default=None,
@@ -1151,6 +1157,8 @@ if __name__ == "__main__":
         state_dropout_p=args.state_dropout_p,
         holdout_frac=args.holdout_frac,
     )
+    if args.output_dir:
+        cfg.output_dir = args.output_dir
     if args.smoke_test:
         cfg = apply_smoke_test_overrides(cfg)
     if args.resume_from:

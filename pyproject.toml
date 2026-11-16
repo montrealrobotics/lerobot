@@ -479,3 +479,53 @@ ignore_errors = false
 # [[tool.mypy.overrides]]
 # module = "lerobot.scripts.*"
 # ignore_errors = false
+
+[tool.cluv]
+job_script_path = "cluv_dexjoco_train.sh"
+results_path = "$SCRATCH/cluv/lerobot-dexjoco"
+project_dir = "$SCRATCH/repos/lerobot-dexjoco"
+
+[tool.cluv.env]
+# Compute nodes without internet by default; the clusters below that have it say so. The jobs read pi05_base and the
+# tokenizer from $SCRATCH/dexjoco-data/hf, so the Hub stays offline everywhere.
+UV_OFFLINE = "1"
+UV_CACHE_DIR = "$SCRATCH/uv_cache"
+HF_HUB_OFFLINE = "1"
+WANDB_MODE = "offline"
+WANDB_ENTITY = "akuramshin-universit-de-montr-al"
+
+[tool.cluv.local]
+env = { SCRATCH = "$HOME/scratch" }
+
+[tool.cluv.sbatch_args]
+requeue = true
+
+# Full fine-tuning peaks at ~54 GB, so only 80 GB GPUs are raced.
+[tool.cluv.clusters.mila]
+env = { UV_OFFLINE = "0", WANDB_MODE = "online" }
+sbatch_args = [{ partition = "long", gres = "gpu:a100l:1" }]
+
+[tool.cluv.clusters.nibi]
+env = { UV_OFFLINE = "0", WANDB_MODE = "online", C_INCLUDE_PATH = "$SCRATCH/evdev_inc" }
+sbatch_args = [
+    { account = "def-kdarvish", gpus-per-node = "h100:1" },
+    { account = "rrg-bengioy-ad", gpus-per-node = "h100:1" },
+    { account = "def-gberseth", gpus-per-node = "h100:1" },
+]
+
+[tool.cluv.clusters.fir]
+env = { UV_OFFLINE = "0", WANDB_MODE = "online", C_INCLUDE_PATH = "$SCRATCH/evdev_inc_sys" }
+sbatch_args = [
+    { account = "def-kdarvish", gpus-per-node = "h100:1" },
+    { account = "rrg-bengioy-ad", gpus-per-node = "h100:1" },
+    { account = "def-gberseth", gpus-per-node = "h100:1" },
+]
+
+[tool.cluv.clusters.rorqual]
+env = { C_INCLUDE_PATH = "$SCRATCH/evdev_inc" }
+sbatch_args = [
+    { account = "rrg-bengioy-ad", gpus-per-node = "h100:1" },
+    { account = "rrg-gberseth", gpus-per-node = "h100:1" },
+    { account = "def-gberseth", gpus-per-node = "h100:1" },
+    { account = "def-kdarvish", gpus-per-node = "h100:1" },
+]

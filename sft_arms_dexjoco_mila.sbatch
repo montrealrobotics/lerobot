@@ -104,28 +104,7 @@ if prompt not in dataset_prompts:
     raise SystemExit(f"eval prompt {prompt!r} is not a training prompt {sorted(dataset_prompts)}")
 ENVCHECK
 
-# Drop AdamW state from every checkpoint but the newest: resume only ever reads `last`,
-# and the pruned rungs keep pretrained_model/ so the checkpoint ladder stays usable for
-# eval and for dual-noise selection. SFT_PRUNE_OPTIMIZER_STATE=0 keeps everything.
 PRUNE=${SFT_PRUNE_OPTIMIZER_STATE:-1}
-prune_loop () {
-    local root="$1"
-    while true; do
-        sleep 300
-        [ -d "$root" ] || continue
-        local last_target
-        last_target=$(basename "$(readlink -f "$root/last")" 2>/dev/null)
-        [ -n "$last_target" ] && [ "$last_target" != last ] || continue
-        for d in "$root"/[0-9]*; do
-            [ -d "$d" ] || continue
-            [ "$(basename "$d")" = "$last_target" ] && continue
-            if [ -d "$d/training_state" ]; then
-                rm -rf "$d/training_state"
-                echo "[prune] dropped optimizer state from $(basename "$d") (keeping $last_target)"
-            fi
-        done
-    done
-}
 
 # Preemption requeues the job, which reruns this script from the top.
 RUN_RECORD="$OUTROOT/.slurm_runs/${SLURM_JOB_ID:-local}"
