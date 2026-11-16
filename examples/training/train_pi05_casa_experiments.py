@@ -116,6 +116,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import torch
 
 from lerobot.configs import FeatureType, PolicyFeature
@@ -719,6 +720,12 @@ def make_eval_env(task_spec: TaskSpec, metadata: LeRobotDatasetMetadata) -> EnvC
     )
 
 
+def holdout_episodes(num_episodes: int, frac: float) -> list[int]:
+    """Episodes kept out of training, fixed per dataset size so every seed and arm shares them."""
+    n = round(frac * num_episodes)
+    return sorted(np.random.default_rng(0).choice(num_episodes, n, replace=False).tolist())
+
+
 def make_config(
     experiment: str,
     task: str,
@@ -729,6 +736,7 @@ def make_config(
     save_freq: int = SAVE_FREQ,
     color_jitter: dict[str, float] | None = None,
     state_dropout_p: float = STATE_DROPOUT_P,
+    holdout_frac: float = 0.0,
 ) -> TrainPipelineConfig:
     spec = EXPERIMENTS[experiment]
     task_spec = TASKS[task]
@@ -738,6 +746,11 @@ def make_config(
     state_dim = metadata.features["observation.state"]["shape"][0]
     action_dim = metadata.features["action"]["shape"][0]
     env = make_eval_env(task_spec, metadata)
+    heldout = holdout_episodes(metadata.total_episodes, holdout_frac)
+    train_episodes = None
+    if heldout:
+        train_episodes = sorted(set(range(metadata.total_episodes)) - set(heldout))
+        print(f"holding out {len(heldout)}/{metadata.total_episodes} episodes: {heldout}")
 
     # Scale LRs for the per-arm mini-sweep.
     peak_lr = _scaled(spec.peak_lr, lr_scale)
@@ -755,11 +768,13 @@ def make_config(
             # intersection) for no benefit here.
             repo_id=task_spec.dataset,
             root=task_spec.dataset_root,
+            episodes=train_episodes,
             video_backend="pyav",
             image_transforms=make_image_transforms(color_jitter),
         ),
         env=env,
-        job_name=f"sft_arms_{task_spec.name}_{spec.name}_lrx{lr_scale:g}_seed{seed}",
+        job_name=f"sft_arms_{task_spec.name}_{spec.name}_lrx{lr_scale:g}_seed{seed}"
+        + (f"_holdout{len(heldout)}" if heldout else ""),
         resume=False,
         seed=seed,
         policy=PI05Config(
@@ -1070,6 +1085,12 @@ def parse_args() -> argparse.Namespace:
         "Keep it identical across arms -- it is a declared fairness invariant.",
     )
     parser.add_argument(
+        "--holdout-frac",
+        type=float,
+        default=0.0,
+        help="Keep this fraction of episodes out of training (fixed split, see holdout_episodes).",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Build policy + optimizer and assert this arm's trainable set, then exit.",
@@ -1128,6 +1149,7 @@ if __name__ == "__main__":
         save_freq=args.save_freq,
         color_jitter=args.color_jitter,
         state_dropout_p=args.state_dropout_p,
+        holdout_frac=args.holdout_frac,
     )
     if args.smoke_test:
         cfg = apply_smoke_test_overrides(cfg)
