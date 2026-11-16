@@ -9,10 +9,14 @@ export UV_CACHE_DIR=${UV_CACHE_DIR:-/network/scratch/a/artur.kuramshin/uv_cache}
 export UV_PROJECT_ENVIRONMENT="${SLURM_TMPDIR:-/tmp}/venv_${SLURM_JOB_ID:-local}"
 
 # Jobs starting together race on the shared uv cache (a file one job is still unpacking is
-# missing for the other), so retry after a random delay.
+# missing for the other), so retry after a random delay into a fresh venv: a failed sync can
+# leave packages without metadata that the next sync does not repair.
 for attempt in 1 2 3; do
-    ~/.local/bin/uv sync --frozen --quiet --extra pi --extra peft --extra training --extra dataset && break
+    ~/.local/bin/uv sync --frozen --quiet --extra pi --extra peft --extra training --extra dataset \
+        && "$UV_PROJECT_ENVIRONMENT/bin/python" -c "import importlib.metadata as m; [m.version(p) for p in ('torch', 'accelerate', 'transformers', 'lerobot')]" \
+        && break
     [ "$attempt" = 3 ] && { echo "uv sync failed 3 times" >&2; exit 1; }
+    rm -rf "$UV_PROJECT_ENVIRONMENT"
     sleep $((30 + RANDOM % 60))
 done
 ~/.local/bin/uv pip install --quiet --python "$UV_PROJECT_ENVIRONMENT/bin/python" \
