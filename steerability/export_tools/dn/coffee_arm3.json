@@ -1,0 +1,282 @@
+{
+  "10000": {
+    "duplicated": {
+      "eval_s": 993.6886274814606,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 33.0,
+      "pc_success_heldout": 26.0,
+      "pc_success_heldout_seed11_L1S4": 32.0,
+      "pc_success_heldout_seed14_L1S6": 20.0,
+      "pc_success_reference": 40.0,
+      "pc_success_reference_seed0_L8S6": 44.0,
+      "pc_success_reference_seed1_L4S8": 36.0
+    },
+    "iid": {
+      "eval_s": 1090.1628069877625,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 44.0,
+      "pc_success_heldout": 32.0,
+      "pc_success_heldout_seed11_L1S4": 60.0,
+      "pc_success_heldout_seed14_L1S6": 4.0,
+      "pc_success_reference": 56.00000000000001,
+      "pc_success_reference_seed0_L8S6": 48.0,
+      "pc_success_reference_seed1_L4S8": 64.0
+    }
+  },
+  "12000": {
+    "duplicated": {
+      "eval_s": 1015.5216362476349,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 36.0,
+      "pc_success_heldout": 32.0,
+      "pc_success_heldout_seed11_L1S4": 48.0,
+      "pc_success_heldout_seed14_L1S6": 16.0,
+      "pc_success_reference": 40.0,
+      "pc_success_reference_seed0_L8S6": 52.0,
+      "pc_success_reference_seed1_L4S8": 28.000000000000004
+    },
+    "iid": {
+      "eval_s": 1062.2828710079193,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 53.0,
+      "pc_success_heldout": 34.0,
+      "pc_success_heldout_seed11_L1S4": 68.0,
+      "pc_success_heldout_seed14_L1S6": 0.0,
+      "pc_success_reference": 72.0,
+      "pc_success_reference_seed0_L8S6": 68.0,
+      "pc_success_reference_seed1_L4S8": 76.0
+    }
+  },
+  "14000": {
+    "duplicated": {
+      "eval_s": 1008.8520579338074,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 42.0,
+      "pc_success_heldout": 36.0,
+      "pc_success_heldout_seed11_L1S4": 56.00000000000001,
+      "pc_success_heldout_seed14_L1S6": 16.0,
+      "pc_success_reference": 48.0,
+      "pc_success_reference_seed0_L8S6": 52.0,
+      "pc_success_reference_seed1_L4S8": 44.0
+    },
+    "iid": {
+      "eval_s": 1087.8861701488495,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 42.0,
+      "pc_success_heldout": 32.0,
+      "pc_success_heldout_seed11_L1S4": 60.0,
+      "pc_success_heldout_seed14_L1S6": 4.0,
+      "pc_success_reference": 52.0,
+      "pc_success_reference_seed0_L8S6": 52.0,
+      "pc_success_reference_seed1_L4S8": 52.0
+    }
+  },
+  "16000": {
+    "duplicated": {
+      "eval_s": 1012.6861770153046,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 44.0,
+      "pc_success_heldout": 30.0,
+      "pc_success_heldout_seed11_L1S4": 44.0,
+      "pc_success_heldout_seed14_L1S6": 16.0,
+      "pc_success_reference": 57.99999999999999,
+      "pc_success_reference_seed0_L8S6": 56.00000000000001,
+      "pc_success_reference_seed1_L4S8": 60.0
+    },
+    "iid": {
+      "eval_s": 1092.9218344688416,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 54.0,
+      "pc_success_heldout": 36.0,
+      "pc_success_heldout_seed11_L1S4": 68.0,
+      "pc_success_heldout_seed14_L1S6": 4.0,
+      "pc_success_reference": 72.0,
+      "pc_success_reference_seed0_L8S6": 68.0,
+      "pc_success_reference_seed1_L4S8": 76.0
+    }
+  },
+  "18000": {
+    "duplicated": {
+      "eval_s": 1023.4866132736206,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 50.0,
+      "pc_success_heldout": 42.0,
+      "pc_success_heldout_seed11_L1S4": 76.0,
+      "pc_success_heldout_seed14_L1S6": 8.0,
+      "pc_success_reference": 57.99999999999999,
+      "pc_success_reference_seed0_L8S6": 68.0,
+      "pc_success_reference_seed1_L4S8": 48.0
+    },
+    "iid": {
+      "eval_s": 1094.854436635971,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 48.0,
+      "pc_success_heldout": 40.0,
+      "pc_success_heldout_seed11_L1S4": 80.0,
+      "pc_success_heldout_seed14_L1S6": 0.0,
+      "pc_success_reference": 56.00000000000001,
+      "pc_success_reference_seed0_L8S6": 68.0,
+      "pc_success_reference_seed1_L4S8": 44.0
+    }
+  },
+  "2000": {
+    "duplicated": {
+      "eval_s": 966.6833572387695,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 8.0,
+      "pc_success_heldout": 12.0,
+      "pc_success_heldout_seed11_L1S4": 16.0,
+      "pc_success_heldout_seed14_L1S6": 8.0,
+      "pc_success_reference": 4.0,
+      "pc_success_reference_seed0_L8S6": 8.0,
+      "pc_success_reference_seed1_L4S8": 0.0
+    },
+    "iid": {
+      "eval_s": 1094.2075111865997,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 53.0,
+      "pc_success_heldout": 52.0,
+      "pc_success_heldout_seed11_L1S4": 44.0,
+      "pc_success_heldout_seed14_L1S6": 60.0,
+      "pc_success_reference": 54.0,
+      "pc_success_reference_seed0_L8S6": 60.0,
+      "pc_success_reference_seed1_L4S8": 48.0
+    }
+  },
+  "20000": {
+    "duplicated": {
+      "eval_s": 1042.7630531787872,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 46.0,
+      "pc_success_heldout": 36.0,
+      "pc_success_heldout_seed11_L1S4": 60.0,
+      "pc_success_heldout_seed14_L1S6": 12.0,
+      "pc_success_reference": 56.00000000000001,
+      "pc_success_reference_seed0_L8S6": 52.0,
+      "pc_success_reference_seed1_L4S8": 60.0
+    },
+    "iid": {
+      "eval_s": 1059.5560402870178,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 38.0,
+      "pc_success_heldout": 30.0,
+      "pc_success_heldout_seed11_L1S4": 52.0,
+      "pc_success_heldout_seed14_L1S6": 8.0,
+      "pc_success_reference": 46.0,
+      "pc_success_reference_seed0_L8S6": 56.00000000000001,
+      "pc_success_reference_seed1_L4S8": 36.0
+    }
+  },
+  "4000": {
+    "duplicated": {
+      "eval_s": 969.0212776660919,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 16.0,
+      "pc_success_heldout": 18.0,
+      "pc_success_heldout_seed11_L1S4": 12.0,
+      "pc_success_heldout_seed14_L1S6": 24.0,
+      "pc_success_reference": 14.000000000000002,
+      "pc_success_reference_seed0_L8S6": 24.0,
+      "pc_success_reference_seed1_L4S8": 4.0
+    },
+    "iid": {
+      "eval_s": 1073.7219231128693,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 42.0,
+      "pc_success_heldout": 44.0,
+      "pc_success_heldout_seed11_L1S4": 24.0,
+      "pc_success_heldout_seed14_L1S6": 64.0,
+      "pc_success_reference": 40.0,
+      "pc_success_reference_seed0_L8S6": 72.0,
+      "pc_success_reference_seed1_L4S8": 8.0
+    }
+  },
+  "6000": {
+    "duplicated": {
+      "eval_s": 1001.813648223877,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 30.0,
+      "pc_success_heldout": 30.0,
+      "pc_success_heldout_seed11_L1S4": 12.0,
+      "pc_success_heldout_seed14_L1S6": 48.0,
+      "pc_success_reference": 30.0,
+      "pc_success_reference_seed0_L8S6": 32.0,
+      "pc_success_reference_seed1_L4S8": 28.000000000000004
+    },
+    "iid": {
+      "eval_s": 1083.649729013443,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 44.0,
+      "pc_success_heldout": 20.0,
+      "pc_success_heldout_seed11_L1S4": 0.0,
+      "pc_success_heldout_seed14_L1S6": 40.0,
+      "pc_success_reference": 68.0,
+      "pc_success_reference_seed0_L8S6": 64.0,
+      "pc_success_reference_seed1_L4S8": 72.0
+    }
+  },
+  "8000": {
+    "duplicated": {
+      "eval_s": 1000.3931286334991,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 38.0,
+      "pc_success_heldout": 30.0,
+      "pc_success_heldout_seed11_L1S4": 12.0,
+      "pc_success_heldout_seed14_L1S6": 48.0,
+      "pc_success_reference": 46.0,
+      "pc_success_reference_seed0_L8S6": 60.0,
+      "pc_success_reference_seed1_L4S8": 32.0
+    },
+    "iid": {
+      "eval_s": 1071.1705479621887,
+      "n": 100,
+      "n_heldout": 50,
+      "n_reference": 50,
+      "pc_success": 66.0,
+      "pc_success_heldout": 64.0,
+      "pc_success_heldout_seed11_L1S4": 52.0,
+      "pc_success_heldout_seed14_L1S6": 76.0,
+      "pc_success_reference": 68.0,
+      "pc_success_reference_seed0_L8S6": 72.0,
+      "pc_success_reference_seed1_L4S8": 64.0
+    }
+  }
+}

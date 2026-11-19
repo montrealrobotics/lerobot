@@ -1,0 +1,114 @@
+{
+ "bank": "/network/scratch/c/cloutiec/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair_dsrl/bank.json",
+ "bank_md5": "919c648884d68744e4cb0b841cb6d066",
+ "replacements": [
+  {
+   "checkpoint": 2000,
+   "seed": 0,
+   "new": "chacloutier-4B/lerobot-dsrl/049brp9y",
+   "new_job": "11046012",
+   "old": "forge chacloutier-4B/lerobot-dsrl/w9wtw86b",
+   "n_evals": 20,
+   "last_eval_step": 500012
+  },
+  {
+   "checkpoint": 2000,
+   "seed": 1,
+   "new": "chacloutier-4B/lerobot-dsrl/h7oijfjv",
+   "new_job": "11046013",
+   "old": "forge chacloutier-4B/lerobot-dsrl/enrey7u1",
+   "n_evals": 20,
+   "last_eval_step": 500007
+  },
+  {
+   "checkpoint": 2000,
+   "seed": 2,
+   "new": "chacloutier-4B/lerobot-dsrl/9w29s3m7",
+   "new_job": "11046014",
+   "old": "forge chacloutier-4B/lerobot-dsrl/hpiu4584",
+   "n_evals": 20,
+   "last_eval_step": 500005
+  },
+  {
+   "checkpoint": 4000,
+   "seed": 0,
+   "new": "chacloutier-4B/lerobot-dsrl/hypdplik",
+   "new_job": "11046015",
+   "old": "forge chacloutier-4B/lerobot-dsrl/5l6gl74q",
+   "n_evals": 20,
+   "last_eval_step": 500012
+  },
+  {
+   "checkpoint": 4000,
+   "seed": 1,
+   "new": "chacloutier-4B/lerobot-dsrl/4s8s3mav",
+   "new_job": "11046016",
+   "old": "forge chacloutier-4B/lerobot-dsrl/8si7w1bx",
+   "n_evals": 20,
+   "last_eval_step": 500010
+  },
+  {
+   "checkpoint": 4000,
+   "seed": 2,
+   "new": "chacloutier-4B/lerobot-dsrl/ih6yiu4z",
+   "new_job": "11046017",
+   "old": "forge chacloutier-4B/lerobot-dsrl/iqqqpqcy",
+   "n_evals": 20,
+   "last_eval_step": 500006
+  },
+  {
+   "checkpoint": 8000,
+   "seed": 0,
+   "new": "chacloutier-4B/lerobot-dsrl/srvgrydc",
+   "new_job": "11046018",
+   "old": "forge chacloutier-4B/lerobot-dsrl/0gjtolju",
+   "n_evals": 20,
+   "last_eval_step": 500003
+  },
+  {
+   "checkpoint": 8000,
+   "seed": 1,
+   "new": "chacloutier-4B/lerobot-dsrl/wrlumb4i",
+   "new_job": "11046019",
+   "old": "forge chacloutier-4B/lerobot-dsrl/tegixvlk",
+   "n_evals": 20,
+   "last_eval_step": 500011
+  },
+  {
+   "checkpoint": 8000,
+   "seed": 2,
+   "new": "chacloutier-4B/lerobot-dsrl/d3h802pd",
+   "new_job": "11046020",
+   "old": "forge chacloutier-4B/lerobot-dsrl/cwkwwcb1",
+   "n_evals": 20,
+   "last_eval_step": 500014
+  },
+  {
+   "checkpoint": 16000,
+   "seed": 0,
+   "new": "chacloutier-4B/lerobot-dsrl/1oh4f7qu",
+   "new_job": "11046021",
+   "old": "forge chacloutier-4B/lerobot-dsrl/am1nwt30",
+   "n_evals": 20,
+   "last_eval_step": 500001
+  },
+  {
+   "checkpoint": 16000,
+   "seed": 1,
+   "new": "chacloutier-4B/lerobot-dsrl/gv9gbijo",
+   "new_job": "11046022",
+   "old": "forge chacloutier-4B/lerobot-dsrl/30pedpgb",
+   "n_evals": 20,
+   "last_eval_step": 500007
+  },
+  {
+   "checkpoint": 16000,
+   "seed": 2,
+   "new": "chacloutier-4B/lerobot-dsrl/fu7ndv1p",
+   "new_job": "11046023",
+   "old": "forge chacloutier-4B/lerobot-dsrl/zepe5bc6",
+   "n_evals": 20,
+   "last_eval_step": 500000
+  }
+ ]
+}

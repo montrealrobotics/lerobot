@@ -96,6 +96,30 @@ starts 7.4 cm apart (yaw −61.3° / −118.5°); `PlacementBankWrapper` alterna
 reset. Held out is their interpolated midpoint (yaw −89.9°). All three pass the bank's
 feasibility checks. Built by `scripts/build_lamp_pair_bank.py`.
 
+**Which lamp bank file each DSRL run used** (checked 2026-10-02 from wandb `--placement_bank` args
+and eval-video first frames):
+
+| runs | bank file | md5 | starts |
+|---|---|---|---|
+| arm0 (Mila, 09-22), arm1 (Rorqual, 09-27), arm2/arm3 (Nibi, 09-23); dual-noise eval 09-25 | Artur's September pair bank, built from `screwlightbulb_xarm6_seed1_calib` (`/network/scratch/a/artur.kuramshin/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair/bank.json` on Mila; `/scratch/akur/...` on Rorqual; `/home/akur/scratch/...` on Nibi) | not readable from Mila accounts other than Artur's | 7.4 cm apart, yaw −61.3° / −118.5° |
+| arm4 (forge, 09-27 15:25 UTC) | 09-27 rebuild `/network/scratch/c/cloutiec/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair/bank.json`, built from the non-calib `screwlightbulb_xarm6_seed1` bank | `c9a65d3504fcbbe0d825fa50ac442694` | 26.8 cm apart, yaw −105.8° / −90.5° |
+| arm4 lamp reruns `dsrl_arm4_lamp_<step>_s<seed>_sepbank` (Mila, 2026-10-02; runs listed in `~/scratch/claude_tmp/arm4_rerun/runs.tsv`) and arm4 lamp dual-noise eval (`~/scratch/runs/lamp_arm4_sepbank/`) | regenerated September bank `/network/scratch/c/cloutiec/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair_dsrl/bank.json` (passed with an explicit `--placement_bank`) | `919c648884d68744e4cb0b841cb6d066` | 7.4 cm apart, yaw −61.3° / −118.5° |
+
+The original arm4 lamp DSRL runs (`dsrl_arm4_lamp_<step>_s<seed>`, 09-27) therefore ran on different starts from arms 0–3. They are kept but excluded from arm comparisons; use the `_sepbank` reruns for arm4 lamp.
+The September bank was regenerated on 2026-10-02 with the same poses:
+
+```bash
+python scripts/build_lamp_placement_bank.py --scene_seeds 1 --bank_seed 20260912 --max_offset_m 0.12 \
+    --n_train 16 --train_min_sep_m 0.015 --n_heldout 2 --heldout_min_sep_m 0.025 --n_candidates 400 \
+    --out ~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_calib/bank.json  # md5 9859d37ede73ed665851416056bc3158
+python scripts/build_lamp_pair_bank.py --source_bank <calib>/bank.json --pair s1_train_00,s1_train_06 \
+    --out ~/scratch/lerobot/placement_banks/screwlightbulb_xarm6_seed1_pair_dsrl/bank.json  # md5 919c648884d68744e4cb0b841cb6d066
+```
+
+`--train_min_sep_m` was not recorded; any value in 0.005–0.02 gives the same `s1_train_00` / `s1_train_06`
+(entries 09–15 of the calib bank shift with it). The regenerated pair bank's md5 differs from Artur's file
+because the JSON embeds a creation time and the source path; the poses match.
+
 Frozen-policy baseline — arm0 step 16000, 50 episodes per cell, 2026-09-22:
 
 | cell | success |

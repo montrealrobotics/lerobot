@@ -1,0 +1,1183 @@
+{
+ "meta": {
+  "robocasa_task": "ScrewLightbulb",
+  "bank": "placement_banks/screwlightbulb_xarm6_seed1_pair_extrap/bank.json",
+  "environment": "lamp placement in kitchen seed 1 (layout 4, style 8)",
+  "groups": {
+   "training_envs": [
+    "s1_start_0",
+    "s1_start_1"
+   ],
+   "held_out_envs": [
+    "s1_mid"
+   ],
+   "extrap_envs": [
+    "s1_extrap_0_x1",
+    "s1_extrap_1_x1"
+   ]
+  },
+  "extrap_note": "1x the training-pair separation (7.4 cm) past each training start, continuing the pair's (position, yaw) line. s1_extrap_0_x1: past s1_start_0, yaw -4.2 deg. s1_extrap_1_x1: past s1_start_1, yaw -175.6 deg; also harder for the frozen SFT policy itself.",
+  "dsrl_checkpoints": [
+   2000,
+   4000,
+   8000,
+   16000
+  ],
+  "before_rl_cells_here": "extrap_envs only; training/held-out cells are in dual_noise.json"
+ },
+ "noise_modes": {
+  "iid": "fresh N(0,1) noise at every step of the action chunk (the SFT policy's own sampling)",
+  "duplicated": "one N(0,1) vector held fixed across the action chunk (the input DSRL controls)"
+ },
+ "sft_runs": {
+  "arm2": "mila:04-16-48_sft_arms_lamp_arm2_frozen_llm_lrx1_seed42",
+  "arm0": "mila:15-02-05_sft_arms_lamp_arm0_expert_only_lrx1_seed42",
+  "arm3": "mila:21-06-12_sft_arms_lamp_arm3_lora_r32_lrx1_seed42",
+  "arm1": "rorqual:21-14-26_sft_arms_lamp_arm1_full_ft_lrx1_seed42",
+  "arm4": "drop:09-36-39_sft_arms_lamp_arm4_lora_vlm_full_expert_lrx1_seed42"
+ },
+ "results": {
+  "arm0": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.5,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.3,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.4,
+       "n_episodes": 40
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.15,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.075,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.35,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.3,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.325,
+       "n_episodes": 40
+      }
+     }
+    },
+    "6000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.35,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.25,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.3,
+       "n_episodes": 40
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.05,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.025,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.35,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.2,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.275,
+       "n_episodes": 40
+      }
+     }
+    },
+    "10000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.05,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.025,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.1,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.15,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.125,
+       "n_episodes": 40
+      }
+     }
+    },
+    "12000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.1,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.15,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.125,
+       "n_episodes": 40
+      }
+     }
+    },
+    "14000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.2,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.05,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.125,
+       "n_episodes": 40
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.3,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.1,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 40
+      }
+     }
+    },
+    "18000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.2,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.25,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.225,
+       "n_episodes": 40
+      }
+     }
+    },
+    "20000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.15,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.35,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.25,
+       "n_episodes": 40
+      }
+     }
+    }
+   }
+  },
+  "arm1": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.4,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.35,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.375,
+       "n_episodes": 40
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.25,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.125,
+       "n_episodes": 40
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    }
+   }
+  },
+  "arm2": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.25,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.15,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 40
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.35,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.2,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.275,
+       "n_episodes": 40
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    }
+   }
+  },
+  "arm3": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.05,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.025,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.4,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.25,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.325,
+       "n_episodes": 40
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.2,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.1,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.15,
+       "n_episodes": 40
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.05,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.025,
+       "n_episodes": 40
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "20000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    }
+   }
+  },
+  "arm4": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.2,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.15,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.175,
+       "n_episodes": 40
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.1,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.1,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.1,
+       "n_episodes": 40
+      }
+     }
+    },
+    "6000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "10000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "12000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "14000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "18000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    },
+    "20000": {
+     "iid": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_extrap_0_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       },
+       "s1_extrap_1_x1": {
+        "success_rate": 0.0,
+        "n_episodes": 20
+       }
+      },
+      "extrap_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 40
+      }
+     }
+    }
+   }
+  }
+ }
+}

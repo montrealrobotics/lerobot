@@ -148,7 +148,7 @@ def _default_output_root() -> Path:
     env_root = os.environ.get("LEROBOT_OUTPUT_ROOT")
     if env_root:
         return Path(env_root)
-    mila_root = Path("/network/scratch/a/artur.kuramshin/lerobot/outputs/train")
+    mila_root = Path("/network/scratch/c/cloutiec/lerobot/outputs/train")
     if mila_root.parent.parent.parent.exists():
         return mila_root
     return Path.home() / "scratch" / "lerobot" / "outputs" / "train"
@@ -166,7 +166,7 @@ def _default_lamp_placement_bank() -> str:
     env_path = os.environ.get("LEROBOT_LAMP_PLACEMENT_BANK")
     if env_path:
         return env_path
-    mila_root = Path("/network/scratch/a/artur.kuramshin/lerobot/placement_banks")
+    mila_root = Path("/network/scratch/c/cloutiec/lerobot/placement_banks")
     root = mila_root if mila_root.parent.exists() else Path.home() / "scratch" / "lerobot" / "placement_banks"
     return str(root / "screwlightbulb_xarm6_seed1" / "bank.json")
 
@@ -650,6 +650,7 @@ def make_config(
     save_freq: int = SAVE_FREQ,
     color_jitter: dict[str, float] | None = None,
     state_dropout_p: float = STATE_DROPOUT_P,
+    dtype: str = "bfloat16",
 ) -> TrainPipelineConfig:
     spec = EXPERIMENTS[experiment]
     task_spec = TASKS[task]
@@ -708,13 +709,17 @@ def make_config(
             image_transforms=make_image_transforms(color_jitter),
         ),
         env=env,
-        job_name=f"sft_arms_{task_spec.name}_{spec.name}_lrx{lr_scale:g}_seed{seed}",
+        job_name=f"sft_arms_{task_spec.name}_{spec.name}_lrx{lr_scale:g}_seed{seed}"
+        + ("_fp32" if dtype == "float32" else ""),
         resume=False,
         seed=seed,
         policy=PI05Config(
             pretrained_path=Path(PI05_BASE_MODEL),
             push_to_hub=False,
-            dtype="bfloat16",
+            # bfloat16 stores trainable weights in bf16 with no fp32 master copy (AdamW
+            # erases most updates at these LRs; arXiv:2610.31859). float32 keeps fp32
+            # weights; __main__ then enables bf16 autocast via ACCELERATE_MIXED_PRECISION.
+            dtype=dtype,
             gradient_checkpointing=True,
             # MEASURED: compile_model=True uses compile_mode="max-autotune", whose
             # CUDA-graph private pools take ~40 GiB on top of the ~45 GiB this run needs,
@@ -1037,6 +1042,26 @@ def parse_args() -> argparse.Namespace:
         "wandb log, into <output root>/smoketest/. For validating a batch job's "
         "environment before queueing 12h of it.",
     )
+    parser.add_argument(
+        "--dtype",
+        choices=("bfloat16", "float32"),
+        default="bfloat16",
+        help="Storage dtype of the policy weights (default bfloat16, as in the original arms). "
+        "float32 keeps an fp32 copy of the weights and trains under bf16 autocast.",
+    )
+    parser.add_argument(
+        "--save-steps",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Explicit checkpoint steps; replaces --save-freq when given.",
+    )
+    parser.add_argument(
+        "--stop-step",
+        type=int,
+        default=None,
+        help="Stop after this step. The LR schedule still follows --steps.",
+    )
     args = parser.parse_args()
     args.color_jitter = parse_color_jitter(args.color_jitter_params)
     return args
@@ -1077,7 +1102,14 @@ if __name__ == "__main__":
         save_freq=args.save_freq,
         color_jitter=args.color_jitter,
         state_dropout_p=args.state_dropout_p,
+        dtype=args.dtype,
     )
+    if args.dtype == "float32":
+        # fp32 master weights, bf16 compute: lerobot_train builds Accelerator() without a
+        # mixed_precision argument, so accelerate reads it from this variable.
+        os.environ["ACCELERATE_MIXED_PRECISION"] = "bf16"
+    cfg.save_steps = args.save_steps
+    cfg.stop_step = args.stop_step
     if args.smoke_test:
         cfg = apply_smoke_test_overrides(cfg)
     if args.resume_from:

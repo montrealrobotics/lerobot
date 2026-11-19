@@ -562,7 +562,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             progbar.update(1)
         train_tracker.step()
         is_log_step = cfg.log_freq > 0 and step % cfg.log_freq == 0 and is_main_process
-        is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps
+        is_stop_step = cfg.stop_step is not None and step >= cfg.stop_step
+        if cfg.save_steps:
+            is_saving_step = step in cfg.save_steps or step == cfg.steps or is_stop_step
+        else:
+            is_saving_step = step % cfg.save_freq == 0 or step == cfg.steps or is_stop_step
         is_eval_step = cfg.eval_freq > 0 and step % cfg.eval_freq == 0
 
         if is_log_step:
@@ -664,6 +668,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
                         wandb_logger.log_video(video_paths[0:3], step, mode="eval")
 
             accelerator.wait_for_everyone()
+
+        if is_stop_step:
+            if is_main_process:
+                logging.info(f"Stopping after step {step} (stop_step={cfg.stop_step})")
+            break
 
     if is_main_process:
         progbar.close()

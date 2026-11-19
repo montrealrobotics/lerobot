@@ -1,0 +1,1786 @@
+{
+ "meta": {
+  "lamp_extrap": {
+   "robocasa_task": "ScrewLightbulb",
+   "bank": "placement_banks/screwlightbulb_xarm6_seed1_pair_extrap/bank.json",
+   "environment": "lamp placement in kitchen seed 1 (layout 4, style 8)",
+   "groups": {
+    "training_envs": [
+     "s1_start_0",
+     "s1_start_1"
+    ],
+    "held_out_envs": [
+     "s1_mid"
+    ],
+    "extrap_envs": [
+     "s1_extrap_0_x1",
+     "s1_extrap_1_x1"
+    ]
+   },
+   "extrap_note": "1x the training-pair separation (7.4 cm) past each training start, continuing the pair's (position, yaw) line. s1_extrap_0_x1: past s1_start_0, yaw -4.2 deg. s1_extrap_1_x1: past s1_start_1, yaw -175.6 deg; also harder for the frozen SFT policy itself.",
+   "dsrl_checkpoints": [
+    2000,
+    4000,
+    8000,
+    16000
+   ],
+   "before_rl_cells_here": "extrap_envs only; training/held-out cells are in dual_noise.json"
+  },
+  "coffee_lateral": {
+   "robocasa_task": "CoffeePressButton",
+   "bank": "placement_banks/coffeepressbutton_pandadex_s1_lateral/bank.json",
+   "environment": "kitchen seed 1 (layout 4, style 8, nespresso); coffee machine (and mug) slid sideways",
+   "axis": "lateral offset of the machine; + = the robot's left",
+   "groups": {
+    "training_envs": [
+     "s1_lat-4cm",
+     "s1_lat+0cm"
+    ],
+    "held_out_envs": [
+     "s1_lat-2cm"
+    ],
+    "extrap_envs": [
+     "s1_lat-8cm",
+     "s1_lat+4cm"
+    ]
+   },
+   "dsrl_checkpoints": [
+    4000,
+    8000,
+    14000,
+    18000
+   ],
+   "start_rejection": "10 deg / 3 cm, up to 20 retries"
+  }
+ },
+ "rows": [
+  {
+   "task": "lamp_extrap",
+   "arm": "arm0",
+   "sft_checkpoint": 2000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.08,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.46,
+     "held_out_envs": 0.4,
+     "extrap_envs": 0.4
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.9833,
+     "std_across_seeds": 0.0289,
+     "per_seed": [
+      1.0,
+      1.0,
+      0.95
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm0",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.08,
+     "extrap_envs": 0.075
+    },
+    "duplicated": {
+     "training_envs": 0.54,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.325
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.7333,
+     "std_across_seeds": 0.0764,
+     "per_seed": [
+      0.75,
+      0.65,
+      0.8
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm0",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.12,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.025
+    },
+    "duplicated": {
+     "training_envs": 0.32,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.275
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.8833,
+     "std_across_seeds": 0.1155,
+     "per_seed": [
+      0.95,
+      0.75,
+      0.95
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm0",
+   "sft_checkpoint": 16000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.16,
+     "held_out_envs": 0.32,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.28,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.2
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.45,
+     "std_across_seeds": 0.2179,
+     "per_seed": [
+      0.2,
+      0.6,
+      0.55
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm0",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.32,
+     "held_out_envs": 0.2,
+     "extrap_envs": 0.2
+    },
+    "duplicated": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.08,
+     "extrap_envs": 0.04
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm0",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.24,
+     "held_out_envs": 0.24,
+     "extrap_envs": 0.06
+    },
+    "duplicated": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.08,
+     "extrap_envs": 0.08
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm0",
+   "sft_checkpoint": 14000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.28,
+     "held_out_envs": 0.2,
+     "extrap_envs": 0.28
+    },
+    "duplicated": {
+     "training_envs": 0.12,
+     "held_out_envs": 0.08,
+     "extrap_envs": 0.06
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm0",
+   "sft_checkpoint": 18000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.2,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.22
+    },
+    "duplicated": {
+     "training_envs": 0.08,
+     "held_out_envs": 0.08,
+     "extrap_envs": 0.16
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm1",
+   "sft_checkpoint": 2000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.4,
+     "held_out_envs": 0.28,
+     "extrap_envs": 0.375
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.7333,
+     "std_across_seeds": 0.2517,
+     "per_seed": [
+      0.5,
+      1.0,
+      0.7
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm1",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.32,
+     "held_out_envs": 0.32,
+     "extrap_envs": 0.125
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.6667,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      1.0,
+      0.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.6667,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      1.0,
+      0.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.15,
+     "std_across_seeds": 0.2598,
+     "per_seed": [
+      0.45,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm1",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.12,
+     "extrap_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.2887,
+     "per_seed": [
+      0.0,
+      0.5,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.4333,
+     "std_across_seeds": 0.4509,
+     "per_seed": [
+      0.0,
+      0.9,
+      0.4
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm1",
+   "sft_checkpoint": 16000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.1,
+     "held_out_envs": 0.04,
+     "extrap_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.4667,
+     "std_across_seeds": 0.0577,
+     "per_seed": [
+      0.5,
+      0.4,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.6667,
+     "std_across_seeds": 0.2887,
+     "per_seed": [
+      1.0,
+      0.5,
+      0.5
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm1",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": null,
+     "held_out_envs": null,
+     "extrap_envs": null
+    },
+    "duplicated": {
+     "training_envs": null,
+     "held_out_envs": null,
+     "extrap_envs": null
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm1",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": null,
+     "held_out_envs": null,
+     "extrap_envs": null
+    },
+    "duplicated": {
+     "training_envs": null,
+     "held_out_envs": null,
+     "extrap_envs": null
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 0
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm1",
+   "sft_checkpoint": 14000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.8,
+     "held_out_envs": 0.72,
+     "extrap_envs": 0.38
+    },
+    "duplicated": {
+     "training_envs": 0.54,
+     "held_out_envs": 0.56,
+     "extrap_envs": 0.42
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 0
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm1",
+   "sft_checkpoint": 18000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.48,
+     "held_out_envs": 0.32,
+     "extrap_envs": 0.22
+    },
+    "duplicated": {
+     "training_envs": 0.44,
+     "held_out_envs": 0.48,
+     "extrap_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm2",
+   "sft_checkpoint": 2000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.38,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.2
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.8667,
+     "std_across_seeds": 0.0289,
+     "per_seed": [
+      0.85,
+      0.9,
+      0.85
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm2",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.3,
+     "held_out_envs": 0.32,
+     "extrap_envs": 0.275
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.7,
+     "std_across_seeds": 0.1323,
+     "per_seed": [
+      0.8,
+      0.55,
+      0.75
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm2",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.04,
+     "extrap_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm2",
+   "sft_checkpoint": 16000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm2",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.46,
+     "held_out_envs": 0.68,
+     "extrap_envs": 0.4
+    },
+    "duplicated": {
+     "training_envs": 0.18,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.12
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 0
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm2",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.6,
+     "held_out_envs": 0.4,
+     "extrap_envs": 0.38
+    },
+    "duplicated": {
+     "training_envs": 0.42,
+     "held_out_envs": 0.48,
+     "extrap_envs": 0.28
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm2",
+   "sft_checkpoint": 14000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.72,
+     "held_out_envs": 0.72,
+     "extrap_envs": 0.44
+    },
+    "duplicated": {
+     "training_envs": 0.52,
+     "held_out_envs": 0.76,
+     "extrap_envs": 0.4
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 0
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm2",
+   "sft_checkpoint": 18000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.78,
+     "held_out_envs": 0.64,
+     "extrap_envs": 0.56
+    },
+    "duplicated": {
+     "training_envs": 0.64,
+     "held_out_envs": 0.6,
+     "extrap_envs": 0.42
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm3",
+   "sft_checkpoint": 2000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.16,
+     "extrap_envs": 0.025
+    },
+    "duplicated": {
+     "training_envs": 0.44,
+     "held_out_envs": 0.24,
+     "extrap_envs": 0.325
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.6333,
+     "std_across_seeds": 0.1756,
+     "per_seed": [
+      0.8,
+      0.45,
+      0.65
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm3",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.34,
+     "held_out_envs": 0.16,
+     "extrap_envs": 0.15
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.05,
+     "std_across_seeds": 0.0866,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.15
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm3",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.24,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.06,
+     "held_out_envs": 0.08,
+     "extrap_envs": 0.025
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.1667,
+     "std_across_seeds": 0.2887,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0667,
+     "std_across_seeds": 0.1155,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.2
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm3",
+   "sft_checkpoint": 16000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.5,
+     "held_out_envs": 0.04,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.24,
+     "held_out_envs": 0.04,
+     "extrap_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.5,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.5,
+      0.5,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm3",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.36,
+     "held_out_envs": 0.24,
+     "extrap_envs": 0.16
+    },
+    "duplicated": {
+     "training_envs": 0.16,
+     "held_out_envs": 0.12,
+     "extrap_envs": 0.12
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm3",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.72,
+     "held_out_envs": 0.76,
+     "extrap_envs": 0.18
+    },
+    "duplicated": {
+     "training_envs": 0.28,
+     "held_out_envs": 0.32,
+     "extrap_envs": 0.14
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm3",
+   "sft_checkpoint": 14000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.72,
+     "held_out_envs": 0.84,
+     "extrap_envs": 0.14
+    },
+    "duplicated": {
+     "training_envs": 0.62,
+     "held_out_envs": 0.64,
+     "extrap_envs": 0.14
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm3",
+   "sft_checkpoint": 18000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.66,
+     "held_out_envs": 0.64,
+     "extrap_envs": 0.14
+    },
+    "duplicated": {
+     "training_envs": 0.76,
+     "held_out_envs": 0.76,
+     "extrap_envs": 0.12
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "held_out_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    },
+    "extrap_envs": {
+     "mean": null,
+     "std_across_seeds": null,
+     "per_seed": []
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm4",
+   "sft_checkpoint": 2000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.42,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.175
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.85,
+     "std_across_seeds": 0.15,
+     "per_seed": [
+      0.7,
+      1.0,
+      0.85
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm4",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.1,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.24,
+     "held_out_envs": 0.36,
+     "extrap_envs": 0.1
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.0167,
+     "std_across_seeds": 0.0289,
+     "per_seed": [
+      0.05,
+      0.0,
+      0.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0333,
+     "std_across_seeds": 0.0577,
+     "per_seed": [
+      0.1,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm4",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.0,
+     "held_out_envs": 0.12,
+     "extrap_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp_extrap",
+   "arm": "arm4",
+   "sft_checkpoint": 16000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.3,
+     "held_out_envs": 0.6,
+     "extrap_envs": 0.0
+    },
+    "duplicated": {
+     "training_envs": 0.08,
+     "held_out_envs": 0.0,
+     "extrap_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.3833,
+     "std_across_seeds": 0.2021,
+     "per_seed": [
+      0.5,
+      0.5,
+      0.15
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "after_dsrl_measure": "final noise actor, eval-only, 10 episodes per cell",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm4",
+   "sft_checkpoint": 4000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.82,
+     "held_out_envs": 0.6,
+     "extrap_envs": 0.4
+    },
+    "duplicated": {
+     "training_envs": 0.18,
+     "held_out_envs": 0.12,
+     "extrap_envs": 0.14
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.9533,
+     "std_across_seeds": 0.0416,
+     "per_seed": [
+      1.0,
+      0.92,
+      0.94
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.9733,
+     "std_across_seeds": 0.0231,
+     "per_seed": [
+      1.0,
+      0.96,
+      0.96
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.9133,
+     "std_across_seeds": 0.0808,
+     "per_seed": [
+      1.0,
+      0.9,
+      0.84
+     ]
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm4",
+   "sft_checkpoint": 8000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.74,
+     "held_out_envs": 0.64,
+     "extrap_envs": 0.26
+    },
+    "duplicated": {
+     "training_envs": 0.4,
+     "held_out_envs": 0.32,
+     "extrap_envs": 0.28
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.9667,
+     "std_across_seeds": 0.0115,
+     "per_seed": [
+      0.96,
+      0.96,
+      0.98
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.9333,
+     "std_across_seeds": 0.1155,
+     "per_seed": [
+      1.0,
+      0.8,
+      1.0
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.6333,
+     "std_across_seeds": 0.0611,
+     "per_seed": [
+      0.62,
+      0.58,
+      0.7
+     ]
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm4",
+   "sft_checkpoint": 14000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.74,
+     "held_out_envs": 0.88,
+     "extrap_envs": 0.22
+    },
+    "duplicated": {
+     "training_envs": 0.58,
+     "held_out_envs": 0.68,
+     "extrap_envs": 0.22
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.94,
+     "std_across_seeds": 0.0346,
+     "per_seed": [
+      0.9,
+      0.96,
+      0.96
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.9467,
+     "std_across_seeds": 0.0462,
+     "per_seed": [
+      0.92,
+      1.0,
+      0.92
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.3267,
+     "std_across_seeds": 0.0577,
+     "per_seed": [
+      0.26,
+      0.36,
+      0.36
+     ]
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee_lateral",
+   "arm": "arm4",
+   "sft_checkpoint": 18000,
+   "before_rl": {
+    "iid": {
+     "training_envs": 0.88,
+     "held_out_envs": 0.88,
+     "extrap_envs": 0.14
+    },
+    "duplicated": {
+     "training_envs": 0.72,
+     "held_out_envs": 0.68,
+     "extrap_envs": 0.18
+    }
+   },
+   "after_dsrl_final": {
+    "training_envs": {
+     "mean": 0.82,
+     "std_across_seeds": 0.06,
+     "per_seed": [
+      0.88,
+      0.82,
+      0.76
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.8533,
+     "std_across_seeds": 0.0833,
+     "per_seed": [
+      0.92,
+      0.88,
+      0.76
+     ]
+    },
+    "extrap_envs": {
+     "mean": 0.34,
+     "std_across_seeds": 0.0872,
+     "per_seed": [
+      0.3,
+      0.28,
+      0.44
+     ]
+    }
+   },
+   "after_dsrl_measure": "mean of in-loop evals at 400k-500k env steps",
+   "n_seeds": 3
+  }
+ ]
+}

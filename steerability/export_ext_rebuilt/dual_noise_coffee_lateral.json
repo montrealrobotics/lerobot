@@ -1,0 +1,3317 @@
+{
+ "meta": {
+  "robocasa_task": "CoffeePressButton",
+  "bank": "placement_banks/coffeepressbutton_pandadex_s1_lateral/bank.json",
+  "environment": "kitchen seed 1 (layout 4, style 8, nespresso); coffee machine (and mug) slid sideways",
+  "axis": "lateral offset of the machine; + = the robot's left",
+  "groups": {
+   "training_envs": [
+    "s1_lat-4cm",
+    "s1_lat+0cm"
+   ],
+   "held_out_envs": [
+    "s1_lat-2cm"
+   ],
+   "extrap_envs": [
+    "s1_lat-8cm",
+    "s1_lat+4cm"
+   ]
+  },
+  "dsrl_checkpoints": [
+   4000,
+   8000,
+   14000,
+   18000
+  ],
+  "start_rejection": "10 deg / 3 cm, up to 20 retries"
+ },
+ "noise_modes": {
+  "iid": "fresh N(0,1) noise at every step of the action chunk (the SFT policy's own sampling)",
+  "duplicated": "one N(0,1) vector held fixed across the action chunk (the input DSRL controls)"
+ },
+ "sft_runs": {
+  "arm2": "mila:04-16-11_sft_arms_coffee_arm2_frozen_llm_lrx1_seed42",
+  "arm3": "mila:18-11-00_sft_arms_coffee_arm3_lora_r32_lrx1_seed42",
+  "arm0": "mila:19-38-27_sft_arms_coffee_arm0_expert_only_lrx1_seed42",
+  "arm1": "rorqual:21-11-32_sft_arms_coffee_arm1_full_ft_lrx1_seed42",
+  "arm4": "drop:22-49-49_sft_arms_coffee_arm4_lora_vlm_full_expert_lrx1_seed42"
+ },
+ "results": {
+  "arm0": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.04,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.04,
+       "n_episodes": 50
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.04,
+       "n_episodes": 50
+      }
+     }
+    },
+    "6000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.1,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 50
+      }
+     }
+    },
+    "10000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.04,
+       "n_episodes": 50
+      }
+     }
+    },
+    "12000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      }
+     }
+    },
+    "14000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.42,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.0,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      }
+     }
+    },
+    "18000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.36,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      }
+     }
+    },
+    "20000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.1,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.1,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 50
+      }
+     }
+    }
+   }
+  },
+  "arm1": {
+   "checkpoints": {
+    "12000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.26,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.56,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.26,
+       "n_episodes": 50
+      }
+     }
+    },
+    "14000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.92,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.8,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.38,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.54,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.56,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.42,
+       "n_episodes": 50
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.8,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.7,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.34,
+       "n_episodes": 50
+      }
+     }
+    },
+    "18000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.48,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.48,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.36,
+       "n_episodes": 50
+      }
+     }
+    },
+    "20000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.34,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.56,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.48,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.42,
+       "n_episodes": 50
+      }
+     }
+    }
+   }
+  },
+  "arm2": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.02,
+       "n_episodes": 50
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.46,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.4,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.36,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      }
+     }
+    },
+    "6000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.8,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.96,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.82,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.84,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.74,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.26,
+       "n_episodes": 50
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.4,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.38,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.42,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.48,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      }
+     }
+    },
+    "10000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.74,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.4,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.5,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.46,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.42,
+       "n_episodes": 50
+      }
+     }
+    },
+    "12000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.82,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.52,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.52,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.56,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 50
+      }
+     }
+    },
+    "14000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.52,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.4,
+       "n_episodes": 50
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.56,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.54,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.56,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.36,
+       "n_episodes": 50
+      }
+     }
+    },
+    "18000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.78,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.56,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.42,
+       "n_episodes": 50
+      }
+     }
+    }
+   }
+  },
+  "arm3": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.4,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.5,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.04,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.06,
+       "n_episodes": 50
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.36,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      }
+     }
+    },
+    "6000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      }
+     }
+    },
+    "10000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.48,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      }
+     }
+    },
+    "12000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.04,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.52,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.08,
+       "n_episodes": 50
+      }
+     }
+    },
+    "14000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.84,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.62,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.8,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.82,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.88,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.7,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      }
+     }
+    },
+    "18000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.66,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      }
+     }
+    },
+    "20000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.8,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.66,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.8,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.7,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      }
+     }
+    }
+   }
+  },
+  "arm4": {
+   "checkpoints": {
+    "2000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.54,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.44,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.3,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.2,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.04,
+       "n_episodes": 50
+      }
+     }
+    },
+    "4000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.72,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.92,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.82,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.4,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      }
+     }
+    },
+    "6000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.46,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.58,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.36,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 50
+      }
+     }
+    },
+    "8000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.74,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.64,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.26,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.4,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.32,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      }
+     }
+    },
+    "10000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.28,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.46,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.42,
+       "n_episodes": 50
+      }
+     }
+    },
+    "12000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.44,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.8,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.28,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.62,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.24,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.48,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.46,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.48,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.36,
+       "n_episodes": 50
+      }
+     }
+    },
+    "14000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.74,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.88,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.56,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.36,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.58,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      }
+     }
+    },
+    "16000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.52,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 1.0,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.0,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.76,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.88,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.1,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.64,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.32,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.12,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.7,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.6,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.22,
+       "n_episodes": 50
+      }
+     }
+    },
+    "18000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.8,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.96,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.88,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.88,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.14,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.84,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.16,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.72,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.18,
+       "n_episodes": 50
+      }
+     }
+    },
+    "20000": {
+     "iid": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.6,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.96,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.68,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.2,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.04,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.78,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.68,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.12,
+       "n_episodes": 50
+      }
+     },
+     "duplicated": {
+      "per_env": {
+       "s1_lat-4cm": {
+        "success_rate": 0.76,
+        "n_episodes": 25
+       },
+       "s1_lat+0cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-2cm": {
+        "success_rate": 0.88,
+        "n_episodes": 25
+       },
+       "s1_lat-8cm": {
+        "success_rate": 0.24,
+        "n_episodes": 25
+       },
+       "s1_lat+4cm": {
+        "success_rate": 0.08,
+        "n_episodes": 25
+       }
+      },
+      "training_envs": {
+       "success_rate": 0.82,
+       "n_episodes": 50
+      },
+      "held_out_envs": {
+       "success_rate": 0.88,
+       "n_episodes": 25
+      },
+      "extrap_envs": {
+       "success_rate": 0.16,
+       "n_episodes": 50
+      }
+     }
+    }
+   }
+  }
+ }
+}

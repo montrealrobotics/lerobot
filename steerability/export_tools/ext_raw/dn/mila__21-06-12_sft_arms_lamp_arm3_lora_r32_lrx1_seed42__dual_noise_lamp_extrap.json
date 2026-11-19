@@ -1,0 +1,102 @@
+{
+  "16000": {
+    "duplicated": {
+      "eval_s": 1683.7659661769867,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 0.0,
+      "pc_success_extrap": 0.0,
+      "pc_success_s1_extrap_0_x1": 0.0,
+      "pc_success_s1_extrap_1_x1": 0.0
+    },
+    "iid": {
+      "eval_s": 1931.6255927085876,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 0.0,
+      "pc_success_extrap": 0.0,
+      "pc_success_s1_extrap_0_x1": 0.0,
+      "pc_success_s1_extrap_1_x1": 0.0
+    }
+  },
+  "2000": {
+    "duplicated": {
+      "eval_s": 1666.1727628707886,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 32.5,
+      "pc_success_extrap": 32.5,
+      "pc_success_s1_extrap_0_x1": 40.0,
+      "pc_success_s1_extrap_1_x1": 25.0
+    },
+    "iid": {
+      "eval_s": 1894.9869618415833,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 2.5,
+      "pc_success_extrap": 2.5,
+      "pc_success_s1_extrap_0_x1": 5.0,
+      "pc_success_s1_extrap_1_x1": 0.0
+    }
+  },
+  "20000": {
+    "duplicated": {
+      "eval_s": 1679.5466532707214,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 0.0,
+      "pc_success_extrap": 0.0,
+      "pc_success_s1_extrap_0_x1": 0.0,
+      "pc_success_s1_extrap_1_x1": 0.0
+    },
+    "iid": {
+      "eval_s": 1922.3213832378387,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 0.0,
+      "pc_success_extrap": 0.0,
+      "pc_success_s1_extrap_0_x1": 0.0,
+      "pc_success_s1_extrap_1_x1": 0.0
+    }
+  },
+  "4000": {
+    "duplicated": {
+      "eval_s": 1705.9210441112518,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 15.0,
+      "pc_success_extrap": 15.0,
+      "pc_success_s1_extrap_0_x1": 20.0,
+      "pc_success_s1_extrap_1_x1": 10.0
+    },
+    "iid": {
+      "eval_s": 1892.8966178894043,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 0.0,
+      "pc_success_extrap": 0.0,
+      "pc_success_s1_extrap_0_x1": 0.0,
+      "pc_success_s1_extrap_1_x1": 0.0
+    }
+  },
+  "8000": {
+    "duplicated": {
+      "eval_s": 1695.089851140976,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 2.5,
+      "pc_success_extrap": 2.5,
+      "pc_success_s1_extrap_0_x1": 0.0,
+      "pc_success_s1_extrap_1_x1": 5.0
+    },
+    "iid": {
+      "eval_s": 1888.920428276062,
+      "n": 40,
+      "n_extrap": 40,
+      "pc_success": 0.0,
+      "pc_success_extrap": 0.0,
+      "pc_success_s1_extrap_0_x1": 0.0,
+      "pc_success_s1_extrap_1_x1": 0.0
+    }
+  }
+}

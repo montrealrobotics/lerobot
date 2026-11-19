@@ -38,8 +38,10 @@ from lerobot.envs.configs import RoboCasaEnv
 from lerobot.policies.pi05.configuration_pi05 import PI05Config
 from lerobot.scripts.lerobot_train import train
 from lerobot.utils.import_utils import register_third_party_plugins
+from lerobot.configs.train import TrainPipelineConfig, PeftConfig
 
-PI05_BASE_MODEL = "lerobot/pi05_base"
+# PI05_BASE_MODEL = "lerobot/pi05_base"
+PI05_BASE_MODEL = "/network/scratch/c/cloutiec/lerobot/models/pi05_base"
 ROBOCASA_DEX_EMBODIMENT_ID = 31
 # Eval control mode must match the collected/trained action representation. This dataset is
 # collected + relabeled to absolute joint targets, so evaluate with the JOINT_POSITION controller.
@@ -47,7 +49,7 @@ XARM6_JOINT_POS_CONTROLLER = os.path.join(
     os.path.dirname(robosuite.__file__),
     "controllers/config/robots/default_xarm6dexleaprhomron_joint_pos.json",
 )
-SCRATCH_OUTPUT_ROOT = Path("/network/scratch/a/artur.kuramshin/lerobot/outputs/train")
+SCRATCH_OUTPUT_ROOT = Path("/network/scratch/c/cloutiec/lerobot/outputs/train")
 WRIST_IMAGE_KEY = "observation.images.robot0_eye_in_hand"
 EXTERNAL_IMAGE_KEY = "observation.images.robot0_agentview_left"
 RANDOM_EXTERNAL_IMAGE_KEYS = [
@@ -83,8 +85,8 @@ def make_visual_feature(dataset_metadata: LeRobotDatasetMetadata, key: str) -> P
 
 
 def make_config() -> TrainPipelineConfig:
-    # dataset_name = "akuramshin/robocasa_coffeepressbutton_dex_augstyle"
-    dataset_name = "akuramshin/robocasa_lightbulbscrew_dex_filtered"
+    dataset_name = "akuramshin/robocasa_coffeepressbutton_dex_augstyle"
+    # dataset_name = "akuramshin/robocasa_lightbulbscrew_dex_filtered"
     dataset_metadata = LeRobotDatasetMetadata(dataset_name)
     action_dim = dataset_metadata.features["action"]["shape"][0]
     state_dim = dataset_metadata.features["observation.state"]["shape"][0]
@@ -92,7 +94,7 @@ def make_config() -> TrainPipelineConfig:
     cfg = TrainPipelineConfig(
         dataset=DatasetConfig(repo_id=dataset_name, video_backend="pyav"),
         env=RoboCasaEnv(
-            task="ScrewLightbulb",
+            task="CoffeePressButton",
             robot="XArm6DexLeapRHOmron",
             # robot="PandaDexLeapRHOmron",
             # robot="PandaOmron",
@@ -143,6 +145,10 @@ def make_config() -> TrainPipelineConfig:
             optimizer_grad_clip_norm=1.0,
         ),
         wandb=WandBConfig(enable=True, project="lerobot-dex"),
+        peft=PeftConfig(
+            method_type="LORA",
+            r=32,
+        ),
         steps=20_000,
         eval_freq=1_000,
         save_freq=1_000,

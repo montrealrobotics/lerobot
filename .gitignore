@@ -177,3 +177,11 @@ outputs/
 *.urdf
 *.xml
 *.part
+
+# Local experiment artifacts (cloutiec)
+diag/p0/history/
+results*/**/*.pt
+results*/**/*.npz
+results*/**/*.lock
+*.bak*
+*.orig

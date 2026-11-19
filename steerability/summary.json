@@ -1,0 +1,2000 @@
+{
+ "meta": {
+  "arms": {
+   "arm0": {
+    "name": "expert only",
+    "trains": "action expert, time MLPs, action projections",
+    "trainable_params": "693M"
+   },
+   "arm1": {
+    "name": "full FT",
+    "trains": "everything",
+    "trainable_params": "4.14B"
+   },
+   "arm2": {
+    "name": "frozen LLM",
+    "trains": "SigLIP, projector, action expert",
+    "trainable_params": "1.11B"
+   },
+   "arm3": {
+    "name": "LoRA r32",
+    "trains": "LoRA on LM + expert; SigLIP, projector full-FT",
+    "trainable_params": "468M"
+   },
+   "arm4": {
+    "name": "LoRA LM, full expert",
+    "trains": "LoRA on LM; action expert, SigLIP, projector full-FT",
+    "trainable_params": "1.15B"
+   }
+  },
+  "tasks": {
+   "lamp": {
+    "robocasa_task": "ScrewLightbulb",
+    "environment": "lamp placement in kitchen seed 1 (layout 4, style 8)",
+    "training_envs": [
+     "s1_start_0",
+     "s1_start_1"
+    ],
+    "held_out_envs": [
+     "s1_mid"
+    ],
+    "dual_noise_training_group": "train",
+    "dsrl_training_metric": "eval/success_rate_train",
+    "dsrl_checkpoints": [
+     2000,
+     4000,
+     8000,
+     16000
+    ],
+    "sft_dataset_frames": 31842
+   },
+   "coffee": {
+    "robocasa_task": "CoffeePressButton",
+    "environment": "kitchen (construction seed, layout, style)",
+    "training_envs": [
+     "seed0_L8S6",
+     "seed1_L4S8"
+    ],
+    "held_out_envs": [
+     "seed11_L1S4",
+     "seed14_L1S6"
+    ],
+    "dual_noise_training_group": "reference",
+    "dsrl_training_metric": "eval/success_rate_reference",
+    "dsrl_checkpoints": [
+     4000,
+     8000,
+     14000,
+     18000
+    ],
+    "sft_dataset_frames": 7928,
+    "note": "DSRL trains in 10 kitchens; training_envs are kitchens 0 and 1 of those 10, the only training kitchens scored at eval time."
+   }
+  },
+  "sft_batch_size": 32,
+  "success_rate_units": "fraction in [0, 1]"
+ },
+ "final_performance": "mean over the evals at 400k-500k env steps, per seed; then mean/std over seeds",
+ "rows": [
+  {
+   "task": "lamp",
+   "arm": "arm0",
+   "sft_checkpoint": 2000,
+   "sft_epochs": 2.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0667,
+     "training_envs": 0.06,
+     "held_out_envs": 0.08
+    },
+    "duplicated": {
+     "all_envs": 0.44,
+     "training_envs": 0.46,
+     "held_out_envs": 0.4
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm0",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 4.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0667,
+     "training_envs": 0.06,
+     "held_out_envs": 0.08
+    },
+    "duplicated": {
+     "all_envs": 0.48,
+     "training_envs": 0.54,
+     "held_out_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm0",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 8.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.2,
+     "training_envs": 0.12,
+     "held_out_envs": 0.36
+    },
+    "duplicated": {
+     "all_envs": 0.3333,
+     "training_envs": 0.32,
+     "held_out_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm0",
+   "sft_checkpoint": 16000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.2133,
+     "training_envs": 0.16,
+     "held_out_envs": 0.32
+    },
+    "duplicated": {
+     "all_envs": 0.3067,
+     "training_envs": 0.28,
+     "held_out_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm1",
+   "sft_checkpoint": 2000,
+   "sft_epochs": 2.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.36,
+     "training_envs": 0.4,
+     "held_out_envs": 0.28
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm1",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 4.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.32,
+     "training_envs": 0.32,
+     "held_out_envs": 0.32
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.6667,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      1.0,
+      0.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 0.6667,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      1.0,
+      0.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.6667,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      1.0,
+      0.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm1",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 8.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.08,
+     "training_envs": 0.06,
+     "held_out_envs": 0.12
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.3111,
+     "std_across_seeds": 0.2698,
+     "per_seed": [
+      0.0,
+      0.48,
+      0.4533
+     ]
+    },
+    "training_envs": {
+     "mean": 0.3267,
+     "std_across_seeds": 0.2831,
+     "per_seed": [
+      0.0,
+      0.48,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.28,
+     "std_across_seeds": 0.2498,
+     "per_seed": [
+      0.0,
+      0.48,
+      0.36
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm1",
+   "sft_checkpoint": 16000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.08,
+     "training_envs": 0.1,
+     "held_out_envs": 0.04
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.4756,
+     "std_across_seeds": 0.0857,
+     "per_seed": [
+      0.5733,
+      0.4133,
+      0.44
+     ]
+    },
+    "training_envs": {
+     "mean": 0.46,
+     "std_across_seeds": 0.0693,
+     "per_seed": [
+      0.5,
+      0.38,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.5067,
+     "std_across_seeds": 0.2013,
+     "per_seed": [
+      0.72,
+      0.48,
+      0.32
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm2",
+   "sft_checkpoint": 2000,
+   "sft_epochs": 2.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.3733,
+     "training_envs": 0.38,
+     "held_out_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm2",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 4.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.3067,
+     "training_envs": 0.3,
+     "held_out_envs": 0.32
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.9867,
+     "std_across_seeds": 0.0231,
+     "per_seed": [
+      1.0,
+      0.96,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 0.9933,
+     "std_across_seeds": 0.0115,
+     "per_seed": [
+      1.0,
+      0.98,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.9733,
+     "std_across_seeds": 0.0462,
+     "per_seed": [
+      1.0,
+      0.92,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm2",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 8.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.0533,
+     "training_envs": 0.06,
+     "held_out_envs": 0.04
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.0089,
+     "std_across_seeds": 0.0154,
+     "per_seed": [
+      0.0267,
+      0.0,
+      0.0
+     ]
+    },
+    "training_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0267,
+     "std_across_seeds": 0.0462,
+     "per_seed": [
+      0.08,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm2",
+   "sft_checkpoint": 16000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "training_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm3",
+   "sft_checkpoint": 2000,
+   "sft_epochs": 2.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0933,
+     "training_envs": 0.06,
+     "held_out_envs": 0.16
+    },
+    "duplicated": {
+     "all_envs": 0.3733,
+     "training_envs": 0.44,
+     "held_out_envs": 0.24
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm3",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 4.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.28,
+     "training_envs": 0.34,
+     "held_out_envs": 0.16
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.5774,
+     "per_seed": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm3",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 8.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.16,
+     "training_envs": 0.24,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.0667,
+     "training_envs": 0.06,
+     "held_out_envs": 0.08
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.1244,
+     "std_across_seeds": 0.2155,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.3733
+     ]
+    },
+    "training_envs": {
+     "mean": 0.1667,
+     "std_across_seeds": 0.2887,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.04,
+     "std_across_seeds": 0.0693,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.12
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm3",
+   "sft_checkpoint": 16000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.3467,
+     "training_envs": 0.5,
+     "held_out_envs": 0.04
+    },
+    "duplicated": {
+     "all_envs": 0.1733,
+     "training_envs": 0.24,
+     "held_out_envs": 0.04
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.3333,
+      0.3333,
+      0.3333
+     ]
+    },
+    "training_envs": {
+     "mean": 0.5,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.5,
+      0.5,
+      0.5
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm4",
+   "sft_checkpoint": 2000,
+   "sft_epochs": 2.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.4,
+     "training_envs": 0.42,
+     "held_out_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "training_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 1.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      1.0,
+      1.0,
+      1.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm4",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 4.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0667,
+     "training_envs": 0.1,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.28,
+     "training_envs": 0.24,
+     "held_out_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.0222,
+     "std_across_seeds": 0.0204,
+     "per_seed": [
+      0.04,
+      0.0,
+      0.0267
+     ]
+    },
+    "training_envs": {
+     "mean": 0.0133,
+     "std_across_seeds": 0.0115,
+     "per_seed": [
+      0.02,
+      0.0,
+      0.02
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.04,
+     "std_across_seeds": 0.04,
+     "per_seed": [
+      0.08,
+      0.0,
+      0.04
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm4",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 8.0,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.0,
+     "training_envs": 0.0,
+     "held_out_envs": 0.0
+    },
+    "duplicated": {
+     "all_envs": 0.04,
+     "training_envs": 0.0,
+     "held_out_envs": 0.12
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "training_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "lamp",
+   "arm": "arm4",
+   "sft_checkpoint": 16000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.4,
+     "training_envs": 0.3,
+     "held_out_envs": 0.6
+    },
+    "duplicated": {
+     "all_envs": 0.0533,
+     "training_envs": 0.08,
+     "held_out_envs": 0.0
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.2222,
+     "std_across_seeds": 0.1388,
+     "per_seed": [
+      0.3333,
+      0.2666,
+      0.0667
+     ]
+    },
+    "training_envs": {
+     "mean": 0.3333,
+     "std_across_seeds": 0.2082,
+     "per_seed": [
+      0.5,
+      0.4,
+      0.1
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.0,
+     "std_across_seeds": 0.0,
+     "per_seed": [
+      0.0,
+      0.0,
+      0.0
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm0",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.33,
+     "training_envs": 0.42,
+     "held_out_envs": 0.24
+    },
+    "duplicated": {
+     "all_envs": 0.07,
+     "training_envs": 0.08,
+     "held_out_envs": 0.06
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.7917,
+     "std_across_seeds": 0.0921,
+     "per_seed": [
+      0.6875,
+      0.825,
+      0.8625
+     ]
+    },
+    "training_envs": {
+     "mean": 0.9333,
+     "std_across_seeds": 0.052,
+     "per_seed": [
+      0.875,
+      0.975,
+      0.95
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.65,
+     "std_across_seeds": 0.1392,
+     "per_seed": [
+      0.5,
+      0.675,
+      0.775
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm0",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 32.3,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.4,
+     "training_envs": 0.44,
+     "held_out_envs": 0.36
+    },
+    "duplicated": {
+     "all_envs": 0.1,
+     "training_envs": 0.16,
+     "held_out_envs": 0.04
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.84,
+     "std_across_seeds": 0.0608,
+     "per_seed": [
+      0.8,
+      0.81,
+      0.91
+     ]
+    },
+    "training_envs": {
+     "mean": 0.9717,
+     "std_across_seeds": 0.0104,
+     "per_seed": [
+      0.975,
+      0.98,
+      0.96
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.7083,
+     "std_across_seeds": 0.1316,
+     "per_seed": [
+      0.625,
+      0.64,
+      0.86
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm0",
+   "sft_checkpoint": 14000,
+   "sft_epochs": 56.5,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.45,
+     "training_envs": 0.64,
+     "held_out_envs": 0.26
+    },
+    "duplicated": {
+     "all_envs": 0.14,
+     "training_envs": 0.14,
+     "held_out_envs": 0.14
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.8367,
+     "std_across_seeds": 0.0611,
+     "per_seed": [
+      0.89,
+      0.77,
+      0.85
+     ]
+    },
+    "training_envs": {
+     "mean": 0.9533,
+     "std_across_seeds": 0.0416,
+     "per_seed": [
+      1.0,
+      0.92,
+      0.94
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.72,
+     "std_across_seeds": 0.0872,
+     "per_seed": [
+      0.78,
+      0.62,
+      0.76
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm0",
+   "sft_checkpoint": 18000,
+   "sft_epochs": 72.7,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.48,
+     "training_envs": 0.58,
+     "held_out_envs": 0.38
+    },
+    "duplicated": {
+     "all_envs": 0.17,
+     "training_envs": 0.16,
+     "held_out_envs": 0.18
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.7933,
+     "std_across_seeds": 0.0252,
+     "per_seed": [
+      0.77,
+      0.82,
+      0.79
+     ]
+    },
+    "training_envs": {
+     "mean": 0.9067,
+     "std_across_seeds": 0.0416,
+     "per_seed": [
+      0.94,
+      0.92,
+      0.86
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.68,
+     "std_across_seeds": 0.0693,
+     "per_seed": [
+      0.6,
+      0.72,
+      0.72
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm1",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.72,
+     "training_envs": 0.72,
+     "held_out_envs": 0.72
+    },
+    "duplicated": {
+     "all_envs": 0.29,
+     "training_envs": 0.32,
+     "held_out_envs": 0.26
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.7867,
+     "std_across_seeds": 0.1102,
+     "per_seed": [
+      0.68,
+      0.78,
+      0.9
+     ]
+    },
+    "training_envs": {
+     "mean": 0.9333,
+     "std_across_seeds": 0.0808,
+     "per_seed": [
+      0.84,
+      0.98,
+      0.98
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.64,
+     "std_across_seeds": 0.1587,
+     "per_seed": [
+      0.52,
+      0.58,
+      0.82
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm1",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 32.3,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.55,
+     "training_envs": 0.58,
+     "held_out_envs": 0.52
+    },
+    "duplicated": {
+     "all_envs": 0.46,
+     "training_envs": 0.52,
+     "held_out_envs": 0.4
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.5767,
+     "std_across_seeds": 0.0289,
+     "per_seed": [
+      0.61,
+      0.56,
+      0.56
+     ]
+    },
+    "training_envs": {
+     "mean": 0.7467,
+     "std_across_seeds": 0.1553,
+     "per_seed": [
+      0.92,
+      0.62,
+      0.7
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.4067,
+     "std_across_seeds": 0.1007,
+     "per_seed": [
+      0.3,
+      0.5,
+      0.42
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm1",
+   "sft_checkpoint": 14000,
+   "sft_epochs": 56.5,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.68,
+     "training_envs": 0.68,
+     "held_out_envs": 0.68
+    },
+    "duplicated": {
+     "all_envs": 0.72,
+     "training_envs": 0.82,
+     "held_out_envs": 0.62
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.7767,
+     "std_across_seeds": 0.0503,
+     "per_seed": [
+      0.77,
+      0.73,
+      0.83
+     ]
+    },
+    "training_envs": {
+     "mean": 0.84,
+     "std_across_seeds": 0.04,
+     "per_seed": [
+      0.88,
+      0.84,
+      0.8
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.7133,
+     "std_across_seeds": 0.1286,
+     "per_seed": [
+      0.66,
+      0.62,
+      0.86
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm1",
+   "sft_checkpoint": 18000,
+   "sft_epochs": 72.7,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.7,
+     "training_envs": 0.58,
+     "held_out_envs": 0.82
+    },
+    "duplicated": {
+     "all_envs": 0.74,
+     "training_envs": 0.76,
+     "held_out_envs": 0.72
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.8567,
+     "std_across_seeds": 0.0115,
+     "per_seed": [
+      0.87,
+      0.85,
+      0.85
+     ]
+    },
+    "training_envs": {
+     "mean": 0.8867,
+     "std_across_seeds": 0.0306,
+     "per_seed": [
+      0.86,
+      0.88,
+      0.92
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.8267,
+     "std_across_seeds": 0.0503,
+     "per_seed": [
+      0.88,
+      0.82,
+      0.78
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm2",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.44,
+     "training_envs": 0.38,
+     "held_out_envs": 0.5
+    },
+    "duplicated": {
+     "all_envs": 0.27,
+     "training_envs": 0.34,
+     "held_out_envs": 0.2
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.7667,
+     "std_across_seeds": 0.0208,
+     "per_seed": [
+      0.75,
+      0.79,
+      0.76
+     ]
+    },
+    "training_envs": {
+     "mean": 0.94,
+     "std_across_seeds": 0.02,
+     "per_seed": [
+      0.94,
+      0.92,
+      0.96
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.5933,
+     "std_across_seeds": 0.0577,
+     "per_seed": [
+      0.56,
+      0.66,
+      0.56
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm2",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 32.3,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.42,
+     "training_envs": 0.46,
+     "held_out_envs": 0.38
+    },
+    "duplicated": {
+     "all_envs": 0.42,
+     "training_envs": 0.52,
+     "held_out_envs": 0.32
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.68,
+     "std_across_seeds": 0.1345,
+     "per_seed": [
+      0.79,
+      0.72,
+      0.53
+     ]
+    },
+    "training_envs": {
+     "mean": 0.8333,
+     "std_across_seeds": 0.0945,
+     "per_seed": [
+      0.94,
+      0.76,
+      0.8
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.5267,
+     "std_across_seeds": 0.2318,
+     "per_seed": [
+      0.64,
+      0.68,
+      0.26
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm2",
+   "sft_checkpoint": 14000,
+   "sft_epochs": 56.5,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.62,
+     "training_envs": 0.82,
+     "held_out_envs": 0.42
+    },
+    "duplicated": {
+     "all_envs": 0.52,
+     "training_envs": 0.5,
+     "held_out_envs": 0.54
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.69,
+     "std_across_seeds": 0.0265,
+     "per_seed": [
+      0.66,
+      0.71,
+      0.7
+     ]
+    },
+    "training_envs": {
+     "mean": 0.88,
+     "std_across_seeds": 0.0872,
+     "per_seed": [
+      0.82,
+      0.98,
+      0.84
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.5,
+     "std_across_seeds": 0.06,
+     "per_seed": [
+      0.5,
+      0.44,
+      0.56
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm2",
+   "sft_checkpoint": 18000,
+   "sft_epochs": 72.7,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.65,
+     "training_envs": 0.7,
+     "held_out_envs": 0.6
+    },
+    "duplicated": {
+     "all_envs": 0.48,
+     "training_envs": 0.58,
+     "held_out_envs": 0.38
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.7167,
+     "std_across_seeds": 0.0709,
+     "per_seed": [
+      0.64,
+      0.73,
+      0.78
+     ]
+    },
+    "training_envs": {
+     "mean": 0.76,
+     "std_across_seeds": 0.08,
+     "per_seed": [
+      0.84,
+      0.76,
+      0.68
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.6733,
+     "std_across_seeds": 0.2212,
+     "per_seed": [
+      0.44,
+      0.7,
+      0.88
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm3",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.42,
+     "training_envs": 0.4,
+     "held_out_envs": 0.44
+    },
+    "duplicated": {
+     "all_envs": 0.16,
+     "training_envs": 0.14,
+     "held_out_envs": 0.18
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.62,
+     "std_across_seeds": 0.05,
+     "per_seed": [
+      0.67,
+      0.62,
+      0.57
+     ]
+    },
+    "training_envs": {
+     "mean": 0.7267,
+     "std_across_seeds": 0.1102,
+     "per_seed": [
+      0.6,
+      0.8,
+      0.78
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.5133,
+     "std_across_seeds": 0.2003,
+     "per_seed": [
+      0.74,
+      0.44,
+      0.36
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm3",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 32.3,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.66,
+     "training_envs": 0.68,
+     "held_out_envs": 0.64
+    },
+    "duplicated": {
+     "all_envs": 0.38,
+     "training_envs": 0.46,
+     "held_out_envs": 0.3
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.5667,
+     "std_across_seeds": 0.0757,
+     "per_seed": [
+      0.48,
+      0.6,
+      0.62
+     ]
+    },
+    "training_envs": {
+     "mean": 0.7,
+     "std_across_seeds": 0.0872,
+     "per_seed": [
+      0.64,
+      0.66,
+      0.8
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.4333,
+     "std_across_seeds": 0.1102,
+     "per_seed": [
+      0.32,
+      0.54,
+      0.44
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm3",
+   "sft_checkpoint": 14000,
+   "sft_epochs": 56.5,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.42,
+     "training_envs": 0.52,
+     "held_out_envs": 0.32
+    },
+    "duplicated": {
+     "all_envs": 0.42,
+     "training_envs": 0.48,
+     "held_out_envs": 0.36
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.5767,
+     "std_across_seeds": 0.0551,
+     "per_seed": [
+      0.64,
+      0.54,
+      0.55
+     ]
+    },
+    "training_envs": {
+     "mean": 0.64,
+     "std_across_seeds": 0.0917,
+     "per_seed": [
+      0.74,
+      0.56,
+      0.62
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.5133,
+     "std_across_seeds": 0.0306,
+     "per_seed": [
+      0.54,
+      0.52,
+      0.48
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm3",
+   "sft_checkpoint": 18000,
+   "sft_epochs": 72.7,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.48,
+     "training_envs": 0.56,
+     "held_out_envs": 0.4
+    },
+    "duplicated": {
+     "all_envs": 0.5,
+     "training_envs": 0.58,
+     "held_out_envs": 0.42
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.5033,
+     "std_across_seeds": 0.0321,
+     "per_seed": [
+      0.49,
+      0.54,
+      0.48
+     ]
+    },
+    "training_envs": {
+     "mean": 0.62,
+     "std_across_seeds": 0.0346,
+     "per_seed": [
+      0.6,
+      0.6,
+      0.66
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.3867,
+     "std_across_seeds": 0.0902,
+     "per_seed": [
+      0.38,
+      0.48,
+      0.3
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm4",
+   "sft_checkpoint": 4000,
+   "sft_epochs": 16.1,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.7125,
+     "training_envs": 0.775,
+     "held_out_envs": 0.65
+    },
+    "duplicated": {
+     "all_envs": 0.1875,
+     "training_envs": 0.275,
+     "held_out_envs": 0.1
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.6667,
+     "std_across_seeds": 0.0723,
+     "per_seed": [
+      0.62,
+      0.75,
+      0.63
+     ]
+    },
+    "training_envs": {
+     "mean": 0.8867,
+     "std_across_seeds": 0.0115,
+     "per_seed": [
+      0.9,
+      0.88,
+      0.88
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.4467,
+     "std_across_seeds": 0.1514,
+     "per_seed": [
+      0.34,
+      0.62,
+      0.38
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm4",
+   "sft_checkpoint": 8000,
+   "sft_epochs": 32.3,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.625,
+     "training_envs": 0.675,
+     "held_out_envs": 0.575
+    },
+    "duplicated": {
+     "all_envs": 0.3375,
+     "training_envs": 0.425,
+     "held_out_envs": 0.25
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.7667,
+     "std_across_seeds": 0.0929,
+     "per_seed": [
+      0.83,
+      0.81,
+      0.66
+     ]
+    },
+    "training_envs": {
+     "mean": 0.84,
+     "std_across_seeds": 0.02,
+     "per_seed": [
+      0.82,
+      0.86,
+      0.84
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.6933,
+     "std_across_seeds": 0.189,
+     "per_seed": [
+      0.84,
+      0.76,
+      0.48
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm4",
+   "sft_checkpoint": 14000,
+   "sft_epochs": 56.5,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.8125,
+     "training_envs": 0.775,
+     "held_out_envs": 0.85
+    },
+    "duplicated": {
+     "all_envs": 0.625,
+     "training_envs": 0.525,
+     "held_out_envs": 0.725
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.83,
+     "std_across_seeds": 0.0173,
+     "per_seed": [
+      0.85,
+      0.82,
+      0.82
+     ]
+    },
+    "training_envs": {
+     "mean": 0.78,
+     "std_across_seeds": 0.0529,
+     "per_seed": [
+      0.82,
+      0.72,
+      0.8
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.88,
+     "std_across_seeds": 0.04,
+     "per_seed": [
+      0.88,
+      0.92,
+      0.84
+     ]
+    }
+   },
+   "n_seeds": 3
+  },
+  {
+   "task": "coffee",
+   "arm": "arm4",
+   "sft_checkpoint": 18000,
+   "sft_epochs": 72.7,
+   "before_rl": {
+    "iid": {
+     "all_envs": 0.75,
+     "training_envs": 0.8,
+     "held_out_envs": 0.7
+    },
+    "duplicated": {
+     "all_envs": 0.65,
+     "training_envs": 0.7,
+     "held_out_envs": 0.6
+    }
+   },
+   "after_dsrl_final": {
+    "all_envs": {
+     "mean": 0.85,
+     "std_across_seeds": 0.0361,
+     "per_seed": [
+      0.81,
+      0.86,
+      0.88
+     ]
+    },
+    "training_envs": {
+     "mean": 0.8133,
+     "std_across_seeds": 0.0416,
+     "per_seed": [
+      0.78,
+      0.86,
+      0.8
+     ]
+    },
+    "held_out_envs": {
+     "mean": 0.8867,
+     "std_across_seeds": 0.0643,
+     "per_seed": [
+      0.84,
+      0.86,
+      0.96
+     ]
+    }
+   },
+   "n_seeds": 3
+  }
+ ]
+}
