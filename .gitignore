@@ -185,3 +185,6 @@ results*/**/*.npz
 results*/**/*.lock
 *.bak*
 *.orig
+
+# cluv results symlink
+/logs

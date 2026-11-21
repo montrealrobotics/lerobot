@@ -531,3 +531,84 @@ requires-dist = ["numpy>=1.13.3", "numba>=0.49.1", "scipy>=1.2.3", "mujoco==3.2.
 name = "robocasa"
 version = "0.2.0"
 requires-dist = ["numpy==2.2.5", "numba", "scipy>=1.2.3", "mujoco==3.2.6", "pygame", "Pillow", "opencv-python", "pyyaml", "pynput", "tqdm", "termcolor", "imageio", "imageio-ffmpeg", "h5py", "lxml", "hidapi", "tianshou"]
+
+[tool.cluv]
+# All variables below can be overridden per cluster (except data_source).
+
+# Job script to use by default when one isn't passed to the `submit` command, on all clusters.
+# Can also be overridden per job submission.
+job_script_path = "scripts/job.sh"
+
+# Where to store job results by default.
+results_path = "$SCRATCH/logs/dexrobot"
+
+# On clusters, Cluv creates a symlink (a shortcut) in your project folder to the results_path dir.
+# This makes it easier to keep your project in $HOME and to see the results which are on $SCRATCH.
+results_symlink = "logs"
+
+## The path where the project should be replicated on remote clusters.
+# project_dir = "$HOME/<project_name>"
+
+## Where to read the data from when synchronizing data to all clusters.
+# data_source = "<cluster>:<dataset_path_on_the_cluster>"
+
+## Where the dataset should be replicated on all clusters.
+# datasets_path = "<path_to_copy_datasets_on_all_clusters>"
+
+[tool.cluv.env]
+# Environment variables applied when using Slurm commands on all clusters.
+# Assume that compute nodes don't have internet access by default. Override below when they do.
+UV_OFFLINE = "1"
+WANDB_MODE = "offline"
+# Read pi05, paligemma and the datasets from the local HF cache only.
+HF_HUB_OFFLINE = "1"
+
+[tool.cluv.local]
+# Settings (environment variables) applied when using cluv on a local machine (not on a Slurm cluster).
+# Fake "$SCRATCH" directory to use when not on a Slurm cluster.
+# This makes the examples runnable either from a laptop or from a Slurm cluster.
+env = { SCRATCH = "$HOME/scratch" }
+
+[tool.cluv.sbatch_args]
+# sbatch flags applied on all clusters. CLI-supplied flags take precedence.
+requeue = true
+
+###  --------------   Clusters Config   --------------  ###
+
+[tool.cluv.clusters.mila]
+env = { UV_OFFLINE = "0", WANDB_MODE = "online", HF_HUB_OFFLINE = "0" }
+
+# DRAC. rorqual is left out until /home/cloutcha exists there (DRAC support ticket, Nov 2026).
+# def-gberseth is also available; a list of sbatch_args submits one job per account and keeps
+# whichever starts first.
+[tool.cluv.clusters.fir]
+env = { UV_OFFLINE = "0", WANDB_MODE = "online", HF_HUB_OFFLINE = "0" }
+sbatch_args = { account = "rrg-gberseth" }
+
+[tool.cluv.clusters.nibi]
+env = { UV_OFFLINE = "0", WANDB_MODE = "online", HF_HUB_OFFLINE = "0" }
+sbatch_args = { account = "rrg-gberseth" }
+
+[tool.cluv.clusters.narval]
+sbatch_args = { account = "rrg-gberseth" }
+
+[tool.cluv.clusters.trillium]
+sbatch_args = { account = "rrg-gberseth" }
+# $HOME isn't mounted on Trillium compute nodes.
+project_dir = "$SCRATCH/repos/dexrobot"
+
+[tool.cluv.clusters.trillium-gpu]
+sbatch_args = { account = "rrg-gberseth" }
+project_dir = "$SCRATCH/repos/dexrobot"
+
+# PAICE.
+[tool.cluv.clusters.tamia]
+sbatch_args = { account = "aip-gberseth" }
+
+[tool.cluv.clusters.killarney]
+sbatch_args = { account = "aip-gberseth" }
+# Killarney refuses jobs submitted from directories under /home.
+project_dir = "$SCRATCH/repos/dexrobot"
+
+[tool.cluv.clusters.vulcan]
+sbatch_args = { account = "aip-gberseth" }
