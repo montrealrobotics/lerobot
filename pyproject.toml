@@ -511,6 +511,9 @@ dexrobot = [
 
 [tool.uv]
 default-groups = ["dexrobot"]
+# evdev (an optional pynput backend, only used by teleop scripts) is built from source and needs
+# kernel headers that DRAC nodes lack. Nothing in training or DSRL imports pynput.
+override-dependencies = ["evdev; sys_platform == 'never'"]
 # LIBERO (and therefore `all`) pins robosuite==1.4.0; the experiments use the robosuite fork above.
 conflicts = [
     [{ group = "dexrobot" }, { extra = "libero" }],

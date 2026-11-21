@@ -107,6 +107,7 @@ conflicts = [[
 ]]
 
 [manifest]
+overrides = [{ name = "evdev", marker = "sys_platform == 'never'" }]
 
 [[manifest.dependency-metadata]]
 name = "robocasa"
@@ -5823,7 +5824,7 @@ name = "pynput"
 version = "1.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "evdev", marker = "'linux' in sys_platform or (extra == 'extra-7-lerobot-all' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-libero' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-reachy2' and extra == 'group-7-lerobot-dexrobot')" },
+    { name = "evdev", marker = "sys_platform == 'never' or (extra == 'extra-7-lerobot-all' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-libero' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-reachy2' and extra == 'group-7-lerobot-dexrobot')" },
     { name = "pyobjc-framework-applicationservices", marker = "sys_platform == 'darwin' or (extra == 'extra-7-lerobot-all' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-libero' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-reachy2' and extra == 'group-7-lerobot-dexrobot')" },
     { name = "pyobjc-framework-quartz", marker = "sys_platform == 'darwin' or (extra == 'extra-7-lerobot-all' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-libero' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-reachy2' and extra == 'group-7-lerobot-dexrobot')" },
     { name = "python-xlib", marker = "'linux' in sys_platform or (extra == 'extra-7-lerobot-all' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-libero' and extra == 'group-7-lerobot-dexrobot') or (extra == 'extra-7-lerobot-reachy2' and extra == 'group-7-lerobot-dexrobot')" },
