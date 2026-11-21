@@ -588,6 +588,9 @@ env = { UV_OFFLINE = "0", WANDB_MODE = "online" }
 [tool.cluv.clusters.fir]
 env = { UV_OFFLINE = "0", WANDB_MODE = "online" }
 sbatch_args = { account = "rrg-gberseth" }
+# fir's /home is slow and failed git clone with EINTR (Nov 2026). Scratch purges files unused for
+# 60 days; `cluv sync fir` restores the checkout and venv.
+project_dir = "$SCRATCH/repos/dexrobot"
 
 [tool.cluv.clusters.nibi]
 env = { UV_OFFLINE = "0", WANDB_MODE = "online" }
