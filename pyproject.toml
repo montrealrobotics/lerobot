@@ -550,18 +550,19 @@ results_symlink = "logs"
 # project_dir = "$HOME/<project_name>"
 
 ## Where to read the data from when synchronizing data to all clusters.
-# data_source = "<cluster>:<dataset_path_on_the_cluster>"
+# HF cache (pi05_base, PaliGemma tokenizer, datasets), placement banks, robocasa assets and
+# SFT checkpoints for DSRL; see scripts/cluv/common.sh. Pushed with `cluv sync --sync-datasets`.
+# cluv only re-pushes when the top directory's mtime changes: `touch` it after adding files.
+data_source = "mila:/network/scratch/c/cloutiec/dexrobot_data"
 
 ## Where the dataset should be replicated on all clusters.
-# datasets_path = "<path_to_copy_datasets_on_all_clusters>"
+datasets_path = "$SCRATCH/dexrobot_data"
 
 [tool.cluv.env]
 # Environment variables applied when using Slurm commands on all clusters.
 # Assume that compute nodes don't have internet access by default. Override below when they do.
 UV_OFFLINE = "1"
 WANDB_MODE = "offline"
-# Read pi05, paligemma and the datasets from the local HF cache only.
-HF_HUB_OFFLINE = "1"
 
 [tool.cluv.local]
 # Settings (environment variables) applied when using cluv on a local machine (not on a Slurm cluster).
@@ -576,17 +577,17 @@ requeue = true
 ###  --------------   Clusters Config   --------------  ###
 
 [tool.cluv.clusters.mila]
-env = { UV_OFFLINE = "0", WANDB_MODE = "online", HF_HUB_OFFLINE = "0" }
+env = { UV_OFFLINE = "0", WANDB_MODE = "online" }
 
 # DRAC. rorqual is left out until /home/cloutcha exists there (DRAC support ticket, Nov 2026).
 # def-gberseth is also available; a list of sbatch_args submits one job per account and keeps
 # whichever starts first.
 [tool.cluv.clusters.fir]
-env = { UV_OFFLINE = "0", WANDB_MODE = "online", HF_HUB_OFFLINE = "0" }
+env = { UV_OFFLINE = "0", WANDB_MODE = "online" }
 sbatch_args = { account = "rrg-gberseth" }
 
 [tool.cluv.clusters.nibi]
-env = { UV_OFFLINE = "0", WANDB_MODE = "online", HF_HUB_OFFLINE = "0" }
+env = { UV_OFFLINE = "0", WANDB_MODE = "online" }
 sbatch_args = { account = "rrg-gberseth" }
 
 [tool.cluv.clusters.narval]

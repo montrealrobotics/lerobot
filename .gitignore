@@ -188,3 +188,5 @@ results*/**/*.lock
 
 # cluv results symlink
 /logs
+/.link_data.lock
+/.fixtures_from_dexrobot_data
