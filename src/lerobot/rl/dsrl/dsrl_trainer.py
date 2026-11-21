@@ -77,6 +77,59 @@ def _atomic_torch_save(payload: dict, path: Path) -> None:
     os.replace(tmp, path)
 
 
+INIT_STATE_COLS = ("hand", "reinit", "copy")
+
+
+def _init_actor_weights(noise_actor, path: str | Path, state_cols: str = "hand", hand_dims: int = 16) -> dict:
+    """Initialise ``noise_actor`` from another run's saved actor (``step_*/`` or ``final/``).
+
+    Used for continual DSRL across tasks: the source actor may have been trained on a robot
+    with a different state size. Every tensor whose shape matches is copied. The only tensor
+    allowed to differ is the first state-projection weight (out, state_dim), whose columns are
+    ``[arm joints..., hand joints (last hand_dims)]``:
+
+    * ``hand``: copy the last ``hand_dims`` columns (same hand on both robots), keep the
+      freshly initialised arm columns (the arms are different robots);
+    * ``reinit``: keep the whole fresh weight;
+    * ``copy``: require identical shapes (same robot).
+
+    Shared-encoder aliases are resolved by storage, as in the example's ``_load_noise_actor``.
+    Returns a summary for logging.
+    """
+    from safetensors.torch import load_file
+
+    if state_cols not in INIT_STATE_COLS:
+        raise ValueError(f"state_cols must be one of {INIT_STATE_COLS}, got {state_cols!r}")
+    src = load_file(str(Path(path) / "model.safetensors"))
+    own = noise_actor.state_dict()
+    unexpected = sorted(set(src) - set(own))
+    if unexpected:
+        raise RuntimeError(f"init actor {path}: keys not in this actor: {unexpected[:3]}")
+    new, copied, partial = {}, [], []
+    for name, s in src.items():
+        d = own[name]
+        if s.shape == d.shape:
+            new[name] = s
+            copied.append(name)
+            continue
+        is_state_proj = name.endswith("state_proj.0.weight") and s.ndim == 2 and s.shape[0] == d.shape[0]
+        if not is_state_proj or state_cols == "copy":
+            raise RuntimeError(f"init actor {path}: shape mismatch on {name}: {tuple(s.shape)} vs {tuple(d.shape)}")
+        w = d.clone()
+        if state_cols == "hand":
+            if min(s.shape[1], d.shape[1]) < hand_dims:
+                raise RuntimeError(f"{name}: fewer than {hand_dims} state columns")
+            w[:, -hand_dims:] = s[:, -hand_dims:]
+        new[name] = w
+        partial.append(f"{name} {tuple(s.shape)}->{tuple(d.shape)} ({state_cols})")
+    missing, _ = noise_actor.load_state_dict(new, strict=False)
+    loaded_ptrs = {t.data_ptr() for n, t in noise_actor.state_dict().items() if n in new}
+    truly_missing = sorted(n for n in missing if own[n].data_ptr() not in loaded_ptrs)
+    if truly_missing:
+        raise RuntimeError(f"init actor {path}: {len(truly_missing)} parameters not initialised, e.g. {truly_missing[:3]}")
+    return {"source": str(path), "copied": len(copied), "partial": partial, "aliases": len(missing)}
+
+
 def train_dsrl(
     env,
     noise_dim: int,
@@ -95,6 +148,11 @@ def train_dsrl(
     dsrl_config: DSRLConfig | None = None,
     eval_fn: Callable[[NoiseActorPolicy, int], dict[str, float]] | None = None,
     resume: bool = False,
+    init_actor_path: str | Path | None = None,
+    init_state_cols: str = "hand",
+    init_state_hand_dims: int = 16,
+    actor_update_delay: int = 0,
+    eval_at_start: bool = False,
 ) -> NoiseActorPolicy:
     """Run DSRL training. Returns the trained NoiseActorPolicy.
 
@@ -217,6 +275,18 @@ def train_dsrl(
     noise_actor.train()
     noise_actor.to(device)
 
+    # A resumed run restores its own actor below; the init only seeds a fresh one.
+    if init_actor_path is not None and resume_state is None:
+        summary = _init_actor_weights(noise_actor, init_actor_path, init_state_cols, init_state_hand_dims)
+        print(
+            f"[init_actor] loaded {summary['copied']} tensors from {summary['source']}; "
+            f"partial: {summary['partial'] or 'none'}; shared-encoder aliases: {summary['aliases']}"
+        )
+        if wandb_run is not None:
+            wandb_run.config.update({"init_actor": summary}, allow_val_change=True)
+    elif init_actor_path is not None:
+        print(f"[init_actor] resuming, so {init_actor_path} is not loaded (actor comes from the resume state)")
+
     # Build SAC algorithm
     algo_cfg = SACAlgorithmConfig.from_policy_config(noise_actor_cfg)
     algo_cfg.num_critics = dsrl_cfg.num_q_heads
@@ -314,6 +384,13 @@ def train_dsrl(
         f"Starting DSRL training for {total_steps} environment steps "
         f"(noise_dim={noise_dim}, collect_envs={num_collect_envs}, from env_step={env_step})"
     )
+
+    if eval_at_start and eval_fn is not None and env_step == 0:
+        eval_metrics = eval_fn(noise_actor, 0)
+        noise_actor.train()
+        if wandb_run is not None:
+            wandb_run.log({f"eval/{k}": v for k, v in eval_metrics.items()}, step=0)
+        print("[eval @ step 0] " + " ".join(f"{k}={v:.3f}" for k, v in eval_metrics.items()))
 
     while env_step < total_steps:
         # Until the buffer is warm, draw noise from the frozen policy's own prior N(0, 1)
@@ -429,6 +506,8 @@ def train_dsrl(
         # Train SAC
         if len(buffer) >= dsrl_cfg.min_buffer_size:
             batch_iterator = buffer.get_iterator(batch_size=dsrl_cfg.batch_size, async_prefetch=False)
+            # Critic-only updates for the first actor_update_delay training steps (0 = off).
+            algorithm.skip_actor_update = training_step < actor_update_delay
             stats = algorithm.update(batch_iterator)
             training_step += 1
 
@@ -443,8 +522,8 @@ def train_dsrl(
 
                 print(
                     f"Step {env_step}/{total_steps} | "
-                    f"critic_loss: {log_dict.get('loss_critic', 'N/A'):.4f} | "
-                    f"actor_loss: {log_dict.get('loss_actor', 'N/A'):.4f} | "
+                    f"critic_loss: {log_dict.get('loss_critic', float('nan')):.4f} | "
+                    f"actor_loss: {log_dict.get('loss_actor', float('nan')):.4f} | "
                     f"buffer: {len(buffer)}"
                 )
 
