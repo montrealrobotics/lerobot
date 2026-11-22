@@ -366,25 +366,30 @@ def make_residual_fns(
 
     ``base_action_fn(stacked_obs)`` samples pi05's chunk, normalized (quantile space, roughly
     [-1, 1] per dimension), first ``n_action_steps`` steps. Its flow noise is all zeros
-    (``base_noise="zero"``, a deterministic base) or a fresh N(0, I) draw per chunk
-    (``"random"``, pi05's own sampling, as in the SFT eval).
+    (``base_noise="zero"``, a deterministic base), a fresh N(0, I) draw per chunk
+    (``"random"``, pi05's own sampling, as in the SFT eval), or one N(0, I) vector per chunk
+    repeated over its steps (``"constant"``, what DSRL's Gaussian warm-up feeds pi05 with
+    ``--noise_chunk_size 1``).
 
     ``residual_fn(stacked_obs, base, residual)`` executes ``base + residual_scale * residual``,
     unnormalized. The residual is the actor's tanh-bounded output, ``residual_steps * action_dim``
     values; with fewer steps than ``n_action_steps`` the last one is repeated over the rest of
     the chunk, as the noise is in DSRL.
     """
-    if base_noise not in ("zero", "random"):
-        raise ValueError(f"base_noise must be 'zero' or 'random'; got {base_noise!r}")
+    if base_noise not in ("zero", "random", "constant"):
+        raise ValueError(f"base_noise must be 'zero', 'random' or 'constant'; got {base_noise!r}")
     comp_keys = ("embodiment_id", "normalization_id")
 
     def base_action_fn(stacked_obs: dict[str, torch.Tensor]) -> torch.Tensor:
         batch = {key: value[:, 0] for key, value in stacked_obs.items()}
         batch_size = next(iter(batch.values())).shape[0]
         shape = (batch_size, full_chunk_size, max_action_dim)
-        noise = (
-            torch.zeros(shape, device=device) if base_noise == "zero" else torch.randn(shape, device=device)
-        )
+        if base_noise == "zero":
+            noise = torch.zeros(shape, device=device)
+        elif base_noise == "random":
+            noise = torch.randn(shape, device=device)
+        else:
+            noise = torch.randn((batch_size, 1, max_action_dim), device=device).expand(shape).contiguous()
         return frozen_policy.predict_action_chunk(batch, noise=noise)[:, :n_action_steps]
 
     def residual_fn(
@@ -1238,10 +1243,11 @@ def main():
     )
     parser.add_argument(
         "--residual_base_noise",
-        choices=["zero", "random"],
+        choices=["zero", "random", "constant"],
         default="zero",
         help="Flow noise for pi05's base chunk: zero = deterministic base; random = a fresh N(0, I) draw per "
-        "chunk, pi05's own sampling as in the SFT eval.",
+        "chunk, pi05's own sampling as in the SFT eval; constant = one N(0, I) vector per chunk repeated over "
+        "its steps, as DSRL's Gaussian warm-up with --noise_chunk_size 1.",
     )
     parser.add_argument(
         "--residual_steps",
