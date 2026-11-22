@@ -5,6 +5,7 @@ import numpy as np
 import torch
 
 from lerobot.rl.dsrl.dsrl_env_wrapper import (
+    BASE_ACTION_KEY,
     DSRL_ACTION_CHUNK_INTERRUPTED,
     DSRL_ACTION_CHUNK_RAW_REWARD,
     DSRL_ACTION_CHUNK_SHAPED_REWARD,
@@ -112,4 +113,83 @@ def test_wrapper_requires_vector_env():
             prepare_obs_fn=_prepare_obs,
             generate_action_chunk_fn=lambda obs, noise: torch.zeros((1, 3, 1)),
             device="cpu",
+        )
+
+
+# ── Residual mode ─────────────────────────────────────────────────────────────────────
+
+
+def _make_residual_wrapper(base_action_fn, residual_fn, *, num_envs=1):
+    env = gym.vector.SyncVectorEnv([_ChunkTestEnv for _ in range(num_envs)])
+    return env, DSRLEnvWrapper(
+        env=env,
+        noise_dim=2,
+        prepare_obs_fn=_prepare_obs,
+        generate_action_chunk_fn=lambda *_: (_ for _ in ()).throw(AssertionError("unused in residual mode")),
+        device="cpu",
+        n_obs_steps=1,
+        base_action_fn=base_action_fn,
+        residual_fn=residual_fn,
+    )
+
+
+def test_residual_mode_exposes_base_chunk_and_executes_base_plus_residual():
+    seen_states = []
+
+    def base_action_fn(stacked_obs):
+        state = stacked_obs["observation.state"][:, 0]  # (B, 1)
+        seen_states.append(state.clone())
+        # Base chunk depends on the observation it was sampled at: 10*state + [1, 2].
+        return (10 * state + torch.tensor([1.0, 2.0])).unsqueeze(-1)  # (B, T=2, A=1)
+
+    def residual_fn(stacked_obs, base, residual):
+        return base + torch.from_numpy(residual).view(base.shape)
+
+    _, wrapped = _make_residual_wrapper(base_action_fn, residual_fn)
+    obs, _ = wrapped.reset()
+    assert torch.equal(obs[BASE_ACTION_KEY], torch.tensor([[1.0, 2.0]]))
+
+    _, reward, terminated, _, info = wrapped.step(np.array([[0.5, -0.5]], dtype=np.float32))
+    # Executed actions are base + residual = [1.5, 1.5]; the env sums them as its reward.
+    assert reward[0] == 3.0
+    assert info[DSRL_ACTION_CHUNK_STEPS][0] == 2
+    # A fresh base chunk was sampled at the post-chunk observation (one call per macro step).
+    assert len(seen_states) == 2
+
+
+def test_residual_partial_reset_keeps_in_flight_base_chunks():
+    calls = {"n": 0}
+
+    def base_action_fn(stacked_obs):
+        calls["n"] += 1
+        batch = stacked_obs["observation.state"].shape[0]
+        return torch.full((batch, 2, 1), float(calls["n"]))
+
+    def residual_fn(stacked_obs, base, residual):
+        return base
+
+    _, wrapped = _make_residual_wrapper(base_action_fn, residual_fn, num_envs=2)
+    obs, _ = wrapped.reset()
+    assert torch.equal(obs[BASE_ACTION_KEY], torch.full((2, 2), 1.0))
+    obs, *_ = wrapped.step(np.zeros((2, 2), dtype=np.float32))
+    assert torch.equal(obs[BASE_ACTION_KEY], torch.full((2, 2), 2.0))
+
+    obs, _ = wrapped.reset(env_mask=np.array([True, False]))
+    # Env 0 was reset and gets the new base chunk; env 1 keeps the one its observation carried.
+    assert torch.equal(obs[BASE_ACTION_KEY][0], torch.full((2,), 3.0))
+    assert torch.equal(obs[BASE_ACTION_KEY][1], torch.full((2,), 2.0))
+
+
+def test_residual_mode_requires_both_functions():
+    import pytest
+
+    env = gym.vector.SyncVectorEnv([_ChunkTestEnv])
+    with pytest.raises(ValueError, match="both"):
+        DSRLEnvWrapper(
+            env=env,
+            noise_dim=2,
+            prepare_obs_fn=_prepare_obs,
+            generate_action_chunk_fn=None,
+            device="cpu",
+            base_action_fn=lambda obs: None,
         )

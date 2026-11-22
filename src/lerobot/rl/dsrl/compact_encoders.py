@@ -61,6 +61,8 @@ class CompactObservationEncoder(nn.Module):
         image_latent_dim: int = 64,
         state_latent_dim: int = 64,
         resize_size: int | None = 64,
+        passthrough_key: str | None = None,
+        passthrough_dim: int = 0,
     ):
         super().__init__()
         self.image_keys = image_keys
@@ -97,8 +99,15 @@ class CompactObservationEncoder(nn.Module):
         else:
             self.state_proj = None
 
-        self.output_dim = (image_latent_dim if self.has_images else 0) + (
-            state_latent_dim if self.has_state else 0
+        # A vector concatenated to the features as is (residual RL's base action chunk): the
+        # actor needs every dimension of what it corrects, not a 64-d summary.
+        self.passthrough_key = passthrough_key
+        self.passthrough_dim = passthrough_dim if passthrough_key is not None else 0
+
+        self.output_dim = (
+            (image_latent_dim if self.has_images else 0)
+            + (state_latent_dim if self.has_state else 0)
+            + self.passthrough_dim
         )
         self._init_weights()
         self._cached_features: dict[int, Tensor] = {}
@@ -122,9 +131,13 @@ class CompactObservationEncoder(nn.Module):
         # stored in the replay buffer, so this is the common case).
         if img.shape[-2:] == (self.resize_size, self.resize_size):
             return img
-        return F.interpolate(img, size=(self.resize_size, self.resize_size), mode="bilinear", align_corners=False)
+        return F.interpolate(
+            img, size=(self.resize_size, self.resize_size), mode="bilinear", align_corners=False
+        )
 
-    def forward(self, observations: dict[str, Tensor], cache: bool | Tensor = False, detach: bool = False) -> Tensor:
+    def forward(
+        self, observations: dict[str, Tensor], cache: bool | Tensor = False, detach: bool = False
+    ) -> Tensor:
         if cache is not False and isinstance(cache, Tensor):
             features = cache.detach() if detach else cache
         else:
@@ -157,6 +170,14 @@ class CompactObservationEncoder(nn.Module):
             if state.ndim == 1:
                 state = state.unsqueeze(0)
             features.append(self.state_proj(state))
+
+        if self.passthrough_key is not None:
+            extra = observations[self.passthrough_key]
+            if extra.ndim == 3:
+                extra = extra.squeeze(1)
+            if extra.ndim == 1:
+                extra = extra.unsqueeze(0)
+            features.append(extra)
 
         return torch.cat(features, dim=-1)
 

@@ -351,6 +351,59 @@ def make_generate_action_chunk_fn(
     return generate_action_chunk
 
 
+def make_residual_fns(
+    frozen_policy: PreTrainedPolicy,
+    postprocessor,
+    full_chunk_size: int,
+    max_action_dim: int,
+    n_action_steps: int,
+    residual_steps: int,
+    residual_scale: float,
+    base_noise: str,
+    device: torch.device,
+):
+    """Residual RL over the frozen pi05: ``(base_action_fn, residual_fn)`` for ``DSRLEnvWrapper``.
+
+    ``base_action_fn(stacked_obs)`` samples pi05's chunk, normalized (quantile space, roughly
+    [-1, 1] per dimension), first ``n_action_steps`` steps. Its flow noise is all zeros
+    (``base_noise="zero"``, a deterministic base) or a fresh N(0, I) draw per chunk
+    (``"random"``, pi05's own sampling, as in the SFT eval).
+
+    ``residual_fn(stacked_obs, base, residual)`` executes ``base + residual_scale * residual``,
+    unnormalized. The residual is the actor's tanh-bounded output, ``residual_steps * action_dim``
+    values; with fewer steps than ``n_action_steps`` the last one is repeated over the rest of
+    the chunk, as the noise is in DSRL.
+    """
+    if base_noise not in ("zero", "random"):
+        raise ValueError(f"base_noise must be 'zero' or 'random'; got {base_noise!r}")
+    comp_keys = ("embodiment_id", "normalization_id")
+
+    def base_action_fn(stacked_obs: dict[str, torch.Tensor]) -> torch.Tensor:
+        batch = {key: value[:, 0] for key, value in stacked_obs.items()}
+        batch_size = next(iter(batch.values())).shape[0]
+        shape = (batch_size, full_chunk_size, max_action_dim)
+        noise = (
+            torch.zeros(shape, device=device) if base_noise == "zero" else torch.randn(shape, device=device)
+        )
+        return frozen_policy.predict_action_chunk(batch, noise=noise)[:, :n_action_steps]
+
+    def residual_fn(
+        stacked_obs: dict[str, torch.Tensor], base: torch.Tensor, residual: np.ndarray
+    ) -> torch.Tensor:
+        batch_size, steps, action_dim = base.shape
+        res = torch.from_numpy(np.asarray(residual, dtype=np.float32)).to(base.device)
+        res = res.view(batch_size, residual_steps, action_dim)
+        if residual_steps < steps:
+            res = torch.cat([res, res[:, -1:].expand(-1, steps - residual_steps, -1)], dim=1)
+        chunk = base + residual_scale * res
+        batch = {key: value[:, 0] for key, value in stacked_obs.items()}
+        comp = {k: batch[k].repeat_interleave(steps, dim=0) for k in comp_keys if k in batch}
+        flat = postprocessor(chunk.reshape(batch_size * steps, action_dim), complementary_data=comp or None)
+        return flat.reshape(batch_size, steps, action_dim)
+
+    return base_action_fn, residual_fn
+
+
 # ── Reward functions ─────────────────────────────────────────────────────────────────
 # Primitive-step rewards (summed over the chunk).
 
@@ -511,6 +564,7 @@ def make_robocasa_eval_fn(
     placement_bank: dict | None = None,
     placement_cells: list[dict] | None = None,
     start_rejection: dict | None = None,
+    residual_fns: tuple | None = None,
 ):
     """Roll out the noise actor greedily in each eval cell; report per-cell + aggregate.
 
@@ -558,6 +612,8 @@ def make_robocasa_eval_fn(
             prepare_frozen_obs_fn=make_frozen_obs_for_env(eval_env),
             reward_fn=reward_fn,
             macro_reward_fn=macro_reward_fn,
+            base_action_fn=residual_fns[0] if residual_fns else None,
+            residual_fn=residual_fns[1] if residual_fns else None,
         )
 
         successes = 0
@@ -1056,9 +1112,14 @@ def main():
         "the first state-projection layer and re-init the arm columns; reinit = re-init that layer; copy = "
         "require identical shapes.",
     )
-    parser.add_argument("--init_state_hand_dims", type=int, default=16, help="Hand joints at the end of the state")
     parser.add_argument(
-        "--actor_update_delay", type=int, default=0, help="Critic-only SAC updates for the first N training steps"
+        "--init_state_hand_dims", type=int, default=16, help="Hand joints at the end of the state"
+    )
+    parser.add_argument(
+        "--actor_update_delay",
+        type=int,
+        default=0,
+        help="Critic-only SAC updates for the first N training steps",
     )
     parser.add_argument("--eval_at_start", action="store_true", help="Also evaluate the actor at env step 0")
     # WandB
@@ -1161,6 +1222,33 @@ def main():
     parser.add_argument("--steer_rollouts_per_start", type=int, default=64)
     parser.add_argument("--steer_parallel_per_start", type=int, default=8)
     parser.add_argument("--reject_start_max_retries", type=int, default=10)
+    # Residual RL: the actor corrects pi05's chunk instead of choosing its noise.
+    parser.add_argument(
+        "--residual",
+        action="store_true",
+        help="Residual RL instead of DSRL: execute pi05's chunk + --residual_scale * actor output (normalized "
+        "action space). The actor sees pi05's chunk; its mean starts at 0, so step 0 is the SFT policy.",
+    )
+    parser.add_argument(
+        "--residual_scale",
+        type=float,
+        default=0.1,
+        help="Largest correction per action dimension, in pi05's normalized action units (quantile "
+        "normalization: q01..q99 of the dataset maps to [-1, 1]).",
+    )
+    parser.add_argument(
+        "--residual_base_noise",
+        choices=["zero", "random"],
+        default="zero",
+        help="Flow noise for pi05's base chunk: zero = deterministic base; random = a fresh N(0, I) draw per "
+        "chunk, pi05's own sampling as in the SFT eval.",
+    )
+    parser.add_argument(
+        "--residual_steps",
+        type=int,
+        default=0,
+        help="Distinct residual steps per chunk; the last is repeated over the rest. 0 = one per executed step.",
+    )
     args = parser.parse_args()
     start_rejection = None
     if args.reject_start_rot_deg > 0:
@@ -1177,6 +1265,15 @@ def main():
         raise ValueError("--eval_only requires --noise_actor_path")
     if args.dsrl_num_layers < 1:
         raise ValueError("--dsrl_num_layers must be >= 1")
+    if args.residual:
+        if args.steer_eval:
+            raise ValueError("--steer_eval measures the noise space; it has no residual version")
+        if args.noise_chunk_size != 1:
+            raise ValueError("--noise_chunk_size is a DSRL flag; use --residual_steps with --residual")
+        if args.init_actor_from:
+            raise ValueError("--init_actor_from is not supported with --residual")
+        if args.dsrl_image_resize <= 0:
+            raise ValueError("--residual needs the compact encoder (--dsrl_image_resize > 0)")
 
     collect_scene_seeds = (
         [int(x) for x in args.collect_scene_seeds.split(",") if x.strip()]
@@ -1215,6 +1312,29 @@ def main():
     if not (1 <= noise_chunk_size <= full_chunk_size):
         raise ValueError(f"--noise_chunk_size must be in [1, {full_chunk_size}]; got {noise_chunk_size}")
     noise_dim = noise_chunk_size * max_action_dim
+    residual_fns = None
+    if args.residual:
+        action_dim = frozen_policy.config.output_features["action"].shape[0]
+        residual_steps = args.residual_steps or n_action_steps
+        if not (1 <= residual_steps <= n_action_steps):
+            raise ValueError(f"--residual_steps must be in [1, {n_action_steps}]; got {residual_steps}")
+        # The RL action is the residual; the trainer still calls it noise_dim.
+        noise_dim = residual_steps * action_dim
+        residual_fns = make_residual_fns(
+            frozen_policy,
+            postprocessor,
+            full_chunk_size,
+            max_action_dim,
+            n_action_steps,
+            residual_steps,
+            args.residual_scale,
+            args.residual_base_noise,
+            device,
+        )
+        print(
+            f"Residual RL: {residual_steps} x {action_dim} = {noise_dim}-d residual, scale "
+            f"{args.residual_scale}, base noise {args.residual_base_noise}"
+        )
 
     embodiment_id = (
         args.embodiment_id if args.embodiment_id >= 0 else frozen_policy.config.default_embodiment_id
@@ -1402,6 +1522,7 @@ def main():
             placement_bank=placement_bank,
             placement_cells=placement_cells,
             start_rejection=start_rejection,
+            residual_fns=residual_fns,
         )
 
     dsrl_cfg = DSRLConfig(
@@ -1447,6 +1568,8 @@ def main():
         init_state_hand_dims=args.init_state_hand_dims,
         actor_update_delay=args.actor_update_delay,
         eval_at_start=args.eval_at_start,
+        base_action_fn=residual_fns[0] if residual_fns else None,
+        residual_fn=residual_fns[1] if residual_fns else None,
     )
 
     env.close()

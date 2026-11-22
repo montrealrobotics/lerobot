@@ -22,8 +22,10 @@ from lerobot.rl.dsrl.dsrl_env_wrapper import (
     DSRL_ACTION_CHUNK_RAW_REWARD,
     DSRL_ACTION_CHUNK_STEPS,
     DSRL_ACTION_CHUNK_SUCCESS,
+    BaseActionFn,
     DSRLEnvWrapper,
     MacroRewardFn,
+    ResidualFn,
 )
 from lerobot.rl.dsrl.noise_actor import (
     LightweightNoiseActorPolicy,
@@ -114,7 +116,9 @@ def _init_actor_weights(noise_actor, path: str | Path, state_cols: str = "hand",
             continue
         is_state_proj = name.endswith("state_proj.0.weight") and s.ndim == 2 and s.shape[0] == d.shape[0]
         if not is_state_proj or state_cols == "copy":
-            raise RuntimeError(f"init actor {path}: shape mismatch on {name}: {tuple(s.shape)} vs {tuple(d.shape)}")
+            raise RuntimeError(
+                f"init actor {path}: shape mismatch on {name}: {tuple(s.shape)} vs {tuple(d.shape)}"
+            )
         w = d.clone()
         if state_cols == "hand":
             if min(s.shape[1], d.shape[1]) < hand_dims:
@@ -126,7 +130,9 @@ def _init_actor_weights(noise_actor, path: str | Path, state_cols: str = "hand",
     loaded_ptrs = {t.data_ptr() for n, t in noise_actor.state_dict().items() if n in new}
     truly_missing = sorted(n for n in missing if own[n].data_ptr() not in loaded_ptrs)
     if truly_missing:
-        raise RuntimeError(f"init actor {path}: {len(truly_missing)} parameters not initialised, e.g. {truly_missing[:3]}")
+        raise RuntimeError(
+            f"init actor {path}: {len(truly_missing)} parameters not initialised, e.g. {truly_missing[:3]}"
+        )
     return {"source": str(path), "copied": len(copied), "partial": partial, "aliases": len(missing)}
 
 
@@ -153,6 +159,8 @@ def train_dsrl(
     init_state_hand_dims: int = 16,
     actor_update_delay: int = 0,
     eval_at_start: bool = False,
+    base_action_fn: BaseActionFn | None = None,
+    residual_fn: ResidualFn | None = None,
 ) -> NoiseActorPolicy:
     """Run DSRL training. Returns the trained NoiseActorPolicy.
 
@@ -170,6 +178,10 @@ def train_dsrl(
         dsrl_config: DSRL hyperparameters (encoders, Q-networks, training).
         wandb_kwargs: Optional ``{"enable": True, "project": "...", "name": "..."}``.
         eval_fn: Optional ``(noise_actor, step) -> {"metric": float}``.
+        base_action_fn, residual_fn: Residual RL instead of noise steering (see
+            ``DSRLEnvWrapper``). ``noise_dim`` is then the residual dimension. The actor's mean
+            head starts at zero, so the first rollouts are the frozen policy's own, and the
+            replay buffer is seeded by that actor rather than by Gaussian noise.
         resume: Continue from ``<output_dir>/resume_state.pt`` if it exists. The state is
             written when the process is signalled (Slurm preemption) and every
             ``dsrl_config.resume_save_freq`` env steps if that is non-zero.
@@ -225,6 +237,7 @@ def train_dsrl(
                     "target_entropy": dsrl_cfg.target_entropy,
                     "seed": seed,
                     "collect_envs": getattr(env, "num_envs", 1),
+                    "mode": "residual" if base_action_fn is not None else "noise",
                 },
             )
             wandb_run = wandb
@@ -244,8 +257,13 @@ def train_dsrl(
         prepare_frozen_obs_fn=prepare_frozen_obs_fn,
         reward_fn=reward_fn,
         macro_reward_fn=macro_reward_fn,
+        base_action_fn=base_action_fn,
+        residual_fn=residual_fn,
     )
     num_collect_envs = dsrl_env.num_envs
+    residual = dsrl_env.residual
+    if residual and not dsrl_cfg.use_compact_encoder:
+        raise ValueError("Residual mode needs the compact encoder (it passes the base chunk through).")
 
     # Build noise actor
     dummy_policy_obs, _ = dsrl_env.reset()
@@ -274,6 +292,11 @@ def train_dsrl(
         noise_actor = NoiseActorPolicy(noise_actor_cfg)
     noise_actor.train()
     noise_actor.to(device)
+    if residual:
+        # tanh(0) = 0: the deterministic residual starts at zero, so eval at step 0 is the SFT
+        # policy itself. The std head is untouched and still drives exploration.
+        torch.nn.init.zeros_(noise_actor.actor.mean_layer.weight)
+        torch.nn.init.zeros_(noise_actor.actor.mean_layer.bias)
 
     # A resumed run restores its own actor below; the init only seeds a fresh one.
     if init_actor_path is not None and resume_state is None:
@@ -285,7 +308,9 @@ def train_dsrl(
         if wandb_run is not None:
             wandb_run.config.update({"init_actor": summary}, allow_val_change=True)
     elif init_actor_path is not None:
-        print(f"[init_actor] resuming, so {init_actor_path} is not loaded (actor comes from the resume state)")
+        print(
+            f"[init_actor] resuming, so {init_actor_path} is not loaded (actor comes from the resume state)"
+        )
 
     # Build SAC algorithm
     algo_cfg = SACAlgorithmConfig.from_policy_config(noise_actor_cfg)
@@ -359,9 +384,7 @@ def train_dsrl(
         print(f"[resume] wrote {resume_path} at env_step={env_step}", flush=True)
 
     if resume_state is not None:
-        noise_actor.load_state_dict(
-            {k: v.to(device) for k, v in resume_state["noise_actor"].items()}
-        )
+        noise_actor.load_state_dict({k: v.to(device) for k, v in resume_state["noise_actor"].items()})
         algorithm.load_state_dict(resume_state["algorithm"], device=device)
         for name, opt in algorithm.get_optimizers().items():
             if name in resume_state["optimizers"]:
@@ -396,7 +419,8 @@ def train_dsrl(
         # Until the buffer is warm, draw noise from the frozen policy's own prior N(0, 1)
         # rather than from the untrained actor, whose tanh squash bounds it to [-1, 1] and
         # so puts the warmup data off-distribution for the diffusion model.
-        warming_up = dsrl_cfg.gaussian_warmup and len(buffer) < dsrl_cfg.min_buffer_size
+        # Residual mode has no prior to match: the zero-mean actor's own samples seed the buffer.
+        warming_up = dsrl_cfg.gaussian_warmup and not residual and len(buffer) < dsrl_cfg.min_buffer_size
         if warming_up:
             noise_tensor = torch.randn(num_collect_envs, noise_dim, device=device)
         else:

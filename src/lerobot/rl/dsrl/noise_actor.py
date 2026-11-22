@@ -44,6 +44,7 @@ from lerobot.utils.constants import ACTION
 
 from .compact_encoders import CompactObservationEncoder
 from .dsrl_config import DSRLConfig
+from .dsrl_env_wrapper import BASE_ACTION_KEY
 
 
 @PreTrainedConfig.register_subclass("noise_actor")
@@ -176,6 +177,10 @@ class LightweightNoiseActorPolicy(NoiseActorPolicy):
         state_key = "observation.state" if "observation.state" in config.input_features else None
         state_dim = config.input_features[state_key].shape[0] if state_key is not None else None
 
+        # Residual RL: the frozen policy's base chunk reaches the actor and critic unencoded.
+        base_key = BASE_ACTION_KEY if BASE_ACTION_KEY in config.input_features else None
+        base_dim = config.input_features[base_key].shape[0] if base_key is not None else 0
+
         encoder = CompactObservationEncoder(
             image_keys=image_keys,
             state_key=state_key,
@@ -183,6 +188,8 @@ class LightweightNoiseActorPolicy(NoiseActorPolicy):
             image_latent_dim=self.dsrl_config.image_latent_dim,
             state_latent_dim=self.dsrl_config.state_latent_dim,
             resize_size=self.dsrl_config.image_resize_size,
+            passthrough_key=base_key,
+            passthrough_dim=base_dim,
         )
 
         self.shared_encoder = True

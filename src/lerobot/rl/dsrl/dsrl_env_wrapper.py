@@ -25,6 +25,12 @@ The wrapper presents a standard RL interface to the trainer: ``reset``/``step`` 
 observations already converted to noise-actor (policy) format, so the training loop never
 needs to know anything about the frozen policy. A single ``gym.vector.VectorEnv`` is always
 used for construction and lifecycle; ``num_envs == 1`` is just a degenerate case.
+
+Residual mode (``base_action_fn`` + ``residual_fn``): the RL action is a correction added to the
+frozen policy's chunk instead of the noise it denoises. The wrapper samples the frozen policy's
+*base* chunk as soon as an observation arrives, exposes it to the actor as
+``observation.base_action`` (flattened, normalized action space), and ``step`` executes
+``residual_fn(stacked_obs, base_chunk, residual)``.
 """
 
 from __future__ import annotations
@@ -44,12 +50,20 @@ DSRL_ACTION_CHUNK_RAW_REWARD = "dsrl_action_chunk_raw_reward"
 DSRL_ACTION_CHUNK_SHAPED_REWARD = "dsrl_action_chunk_shaped_reward"
 DSRL_ACTION_CHUNK_SUCCESS = "dsrl_action_chunk_success"
 
+# Residual mode: the frozen policy's proposed chunk, as the actor and critic see it.
+BASE_ACTION_KEY = "observation.base_action"
+
 PrepareObsFn = Callable[[dict], dict[str, Tensor]]
 GenerateActionChunkFn = Callable[[dict[str, Tensor], np.ndarray], Tensor]
 RewardFn = Callable[[float, bool, bool, dict], float]
 # (raw_reward, shaped_reward, success, terminated, truncated, steps) -> macro reward, where
 # the first two arguments are already accumulated over the chunk's primitive steps.
 MacroRewardFn = Callable[[float, float, bool, bool, bool, int], float]
+# Residual mode. stacked frozen obs -> base chunk (num_envs, n_action_steps, action_dim), normalized.
+BaseActionFn = Callable[[dict[str, Tensor]], Tensor]
+# Residual mode. (stacked frozen obs, base chunk, residual (num_envs, residual_dim)) -> chunk to
+# execute (num_envs, n_action_steps, action_dim), in env units.
+ResidualFn = Callable[[dict[str, Tensor], Tensor, np.ndarray], Tensor]
 
 
 class DSRLEnvWrapper:
@@ -75,6 +89,11 @@ class DSRLEnvWrapper:
             run and overriding the summed primitive reward. Use this for rewards that are
             only defined at the macro-step level — e.g. DSRL's goal-reaching reward of -1
             per chunk until success. Receives the chunk-accumulated raw and shaped rewards.
+        base_action_fn: Residual mode only (with ``residual_fn``). Samples the frozen policy's
+            base chunk for the current observation history; ``noise_dim`` is then the residual
+            dimension and ``generate_action_chunk_fn`` is unused.
+        residual_fn: Residual mode only. Combines the base chunk and the RL residual into the
+            chunk that is executed.
     """
 
     def __init__(
@@ -88,7 +107,11 @@ class DSRLEnvWrapper:
         prepare_frozen_obs_fn: PrepareObsFn | None = None,
         reward_fn: RewardFn | None = None,
         macro_reward_fn: MacroRewardFn | None = None,
+        base_action_fn: BaseActionFn | None = None,
+        residual_fn: ResidualFn | None = None,
     ):
+        if (base_action_fn is None) != (residual_fn is None):
+            raise ValueError("Residual mode needs both base_action_fn and residual_fn.")
         if not isinstance(env, gym.vector.VectorEnv):
             raise TypeError(
                 "DSRLEnvWrapper requires a gym.vector.VectorEnv; wrap a single env in a "
@@ -108,6 +131,11 @@ class DSRLEnvWrapper:
         self._frozen_shares_obs = prepare_frozen_obs_fn is None
         self._reward_fn = reward_fn
         self._macro_reward_fn = macro_reward_fn
+        self._base_action_fn = base_action_fn
+        self._residual_fn = residual_fn
+        self.residual = base_action_fn is not None
+        # Residual mode: the frozen policy's chunk for the current observation of each env.
+        self._base_chunk: Tensor | None = None
 
         self.single_action_space = gym.spaces.Box(low=-1.0, high=1.0, shape=(noise_dim,), dtype=np.float32)
         self.action_space = gym.spaces.Box(
@@ -160,6 +188,8 @@ class DSRLEnvWrapper:
             self._obs_window.clear()
             self._obs_window.extend(merged)
 
+        if self.residual:
+            policy_obs = self._attach_base_chunk(policy_obs, env_mask)
         return policy_obs, info
 
     def step(self, noise_action: np.ndarray):
@@ -175,7 +205,10 @@ class DSRLEnvWrapper:
 
         stacked_obs = self._stack_history()
         with torch.no_grad():
-            action_chunk = self.generate_action_chunk_fn(stacked_obs, noise_action)
+            if self.residual:
+                action_chunk = self._residual_fn(stacked_obs, self._base_chunk, noise_action)
+            else:
+                action_chunk = self.generate_action_chunk_fn(stacked_obs, noise_action)
         if action_chunk.ndim != 3 or action_chunk.shape[0] != self.num_envs:
             raise ValueError(
                 "generate_action_chunk_fn must return a tensor shaped "
@@ -210,6 +243,8 @@ class DSRLEnvWrapper:
 
         if policy_obs is None:
             raise RuntimeError("Action chunk did not execute any primitive steps.")
+        if self.residual:
+            policy_obs = self._attach_base_chunk(policy_obs)
 
         macro_rewards = shaped_rewards
         if self._macro_reward_fn is not None:
@@ -236,6 +271,31 @@ class DSRLEnvWrapper:
         info[DSRL_ACTION_CHUNK_SUCCESS] = successes
 
         return policy_obs, macro_rewards, terminated, truncated, info
+
+    def _attach_base_chunk(
+        self, policy_obs: dict[str, Tensor], env_mask: np.ndarray | None = None
+    ) -> dict[str, Tensor]:
+        """Sample the base chunk for the latest observation and add it to ``policy_obs``.
+
+        With ``env_mask`` (a partial reset) only the masked envs get a new base chunk: the others
+        keep the one already in their last observation, so a stored transition's next state and
+        the following transition's state carry the same base chunk.
+        """
+        with torch.no_grad():
+            base = self._base_action_fn(self._stack_history()).float()
+        if base.ndim != 3 or base.shape[0] != self.num_envs:
+            raise ValueError(
+                f"base_action_fn must return (num_envs, n_action_steps, action_dim); got {tuple(base.shape)}"
+            )
+        if env_mask is not None and self._base_chunk is not None:
+            index = torch.from_numpy(env_mask).to(base.device)
+            merged = self._base_chunk.clone()
+            merged[index] = base[index]
+            base = merged
+        self._base_chunk = base
+        policy_obs = dict(policy_obs)
+        policy_obs[BASE_ACTION_KEY] = base.reshape(self.num_envs, -1).to(self.device)
+        return policy_obs
 
     def _read_successes(self, info: dict) -> np.ndarray:
         """Per-env ``is_success`` flags for one primitive step, defaulting to False."""
